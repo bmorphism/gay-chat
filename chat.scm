@@ -33,6 +33,11 @@
   #:use-module (srfi srfi-9)
   #:export (^chat-room))
 
+
+;;;
+;;; CRDT components
+;;;
+
 (define-record-type <lww-register>
   (make-lww-register timestamp value)
   lww-register?
@@ -102,6 +107,11 @@
 
 (define (message<? a b)
   (clock<? (message-id a) (message-id b)))
+
+
+;;;
+;;; Actors
+;;;
 
 ;; TODO: Sign messages.
 ;;
@@ -219,18 +229,20 @@
     (: (partition-ref key) 'events-since vclock))
    ((ref time)
     (: (partition-ref time) 'ref))
+   ;; Mainly for testing.
    ((ref-all)
     (append-map (match-lambda ((_ . log) (: log 'ref)))
                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
                                     '() (: partitions))
                       (lambda (a b) (< (car a) (car b))))))
-   ((post from contents)
-    (let ((now (current-time)))
-      (: (partition-for-time now) 'post from now contents)))
-   ((edit msgid created contents)
-    (: (partition-for-time created) 'edit msgid (current-time) contents))
-   ((delete msgid created)
-    (: (partition-for-time created) 'delete msgid (current-time)))
+   ((post from contents #:optional (now (current-time)))
+    (: (partition-for-time now) 'post from now contents))
+   ((edit msgid created contents #:optional (now (current-time)))
+    (: (partition-for-time created) 'edit msgid now contents))
+   ((delete msgid created #:optional (now (current-time)))
+    (: (partition-for-time created) 'delete msgid now))
+   ;; TODO: We're not tracking when someone reacted, but maybe we
+   ;; should?
    ((react msgid created char)
     (: (partition-for-time created) 'react msgid char))
    ((unreact msgid created char)
