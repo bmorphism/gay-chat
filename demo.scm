@@ -40,9 +40,9 @@
 
 (define vat (spawn-vat))
 
-(define chat-a (with-vat vat (spawn ^chat "Alice")))
-(define chat-b (with-vat vat (spawn ^chat "Bob")))
-(define chat-c (with-vat vat (spawn ^chat "Carol")))
+(define chat-a (with-vat vat (spawn ^chat-room "Alice")))
+(define chat-b (with-vat vat (spawn ^chat-room "Bob")))
+(define chat-c (with-vat vat (spawn ^chat-room "Carol")))
 
 ;; Alice is connected Bob and Carol.  Bob and Carol are not connected
 ;; to each other.
@@ -68,30 +68,37 @@
 
 (sleep 1)
 
+;; Render result for each peer.
+(with-vat vat
+  (render-chat "Alice" (: chat-a 'ref-all))
+  (render-chat "Bob" (: chat-b 'ref-all))
+  (render-chat "Carol" (: chat-c 'ref-all)))
+
 ;; Edit, delete, and react.
 (with-vat vat
-  (let lp ((messages (: chat-b 'ref)))
+  (let lp ((messages (: chat-b 'ref-all)))
     (match messages
       (() #t)
       (((id created modified deleted from contents reacts) . messages)
        (cond
         ((and (equal? from "Alice") (equal? contents "Hello"))
-         (<-np chat-b 'react id #\👋)
-         (<-np chat-c 'react id #\👋))
+         (<-np chat-b 'react id created #\👋)
+         (<-np chat-c 'react id created #\👋))
         ((and (equal? from "Bob") (equal? contents "asdf"))
-         (<-np chat-b 'delete id))
+         (<-np chat-b 'delete id created))
         ((and (equal? from "Alice") (equal? contents "This is a neat chat demo!"))
-         (<-np chat-b 'react id #\💯)
-         (<-np chat-c 'react id #\👎)
-         (<-np chat-c 'unreact id #\👎))
+         (<-np chat-b 'react id created #\💯)
+         (<-np chat-c 'react id created #\👎)
+         (<-np chat-c 'unreact id created #\👎))
         ((and (equal? from "Carol") (equal? contents "Yeah, it's so grood."))
-         (<-np chat-c 'edit id "Yeah, it's so good!")))
+         (<-np chat-c 'edit id created "Yeah, it's so good!")))
        (lp messages)))))
 
+(display "\nSome time later...\n\n\n")
 (sleep 1)
 
 ;; Render result for each peer.
 (with-vat vat
-  (render-chat "Alice" (: chat-a 'ref))
-  (render-chat "Bob" (: chat-b 'ref))
-  (render-chat "Carol" (: chat-c 'ref) #:debug? #t))
+  (render-chat "Alice" (: chat-a 'ref-all))
+  (render-chat "Bob" (: chat-b 'ref-all))
+  (render-chat "Carol" (: chat-c 'ref-all)))
