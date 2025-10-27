@@ -94,6 +94,12 @@
 ;; call 'ref' and diff the result with the previous version.
 ;;
 ;; TODO: Byzantine fault tolerance.
+;;
+;; IDs must be unique amongst processes editing the CRDT.  IDs are
+;; ephemeral and should be generated fresh for each editing session.
+;; Note that a replica ID is *not* the same as a user ID.  Any given
+;; user could have multiple devices in use, or multiple browser tabs
+;; open, and each should have a different replica ID.
 (define-actor (^crdt become id #:key init (prepare identity) effect (query identity))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
   (define vclock (spawn ^cell empty-vclock))     ; vector clock
@@ -143,6 +149,9 @@
            (else pending)))))
      pending pending))
   (define (sync! replica)
+    ;; TODO: Do we need to send the complete vector clock (which grows
+    ;; without bound) or can we just send the direct predecessor
+    ;; clocks?
     (let-on ((events (<- replica 'events-since (: vclock))))
       (let ((pending*
              ;; Append the new events, filtering out events we
@@ -166,10 +175,14 @@
           ;; Notify other replicas.
           (hashmap-for-each (lambda (_ r) (<-np r 'refresh id)) (: replicas))))))
   (methods
+   ((replica-id) id)
    ;; Add a new replica.
-   ((add-replica id* replica)
-    (: replicas (hashmap-set (: replicas) id* replica))
-    (sync! replica))
+   ;;
+   ;; TODO: Remove replica on severance.
+   ((add-replica replica)
+    (let-on ((id* (<- replica 'replica-id)))
+      (: replicas (hashmap-set (: replicas) id* replica))
+      (sync! replica)))
    ;; Request to refresh using a specific replica.
    ((refresh who)
     (and=> (hashmap-ref (: replicas) who) sync!))

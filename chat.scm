@@ -27,6 +27,8 @@
   #:use-module ((goblins) #:select (($ . :)))
   #:use-module (goblins actor-lib cell)
   #:use-module (goblins actor-lib methods)
+  #:use-module (goblins contrib base64)
+  #:use-module (goblins utils crypto)
   #:use-module (goblins utils hashmap)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
@@ -170,8 +172,8 @@
            #:query query
            #:effect effect))
   (methods
-   ((add-replica id replica)
-    (: crdt 'add-replica id replica))
+   ((add-replica replica)
+    (: crdt 'add-replica replica))
    ((refresh id)
     (: crdt 'refresh id))
    ((events-since vclock)
@@ -189,14 +191,15 @@
    ((unreact msgid char)
     (: crdt 'commit `(unreact ,msgid ,char)))))
 
-(define-actor (^chat-room become id #:optional (period (* 30 60)))
+(define-actor (^chat-room become spn #:optional (period (* 30 60)))
+  ;; Generate a random replica ID.
+  (define id (base64-encode (strong-random-bytes 32) #:padding? #f))
   (define (^partition-replica become replica key)
     (methods
-     ((refresh id)
-      (: replica 'refresh id key))
-     ((events-since vclock)
-      (: replica 'events-since vclock key))))
-  (define replicas (spawn ^cell (make-hashmap)))
+     ((replica-id) (<- replica 'replica-id))
+     ((refresh id) (<-np replica 'refresh id key))
+     ((events-since vclock) (<- replica 'events-since vclock key))))
+  (define replicas (spawn ^cell '()))
   ;; The chat log is partitioned by time to keep the size of each
   ;; individual CRDT small and allow for dropping entire chunks of
   ;; history.  The message creation timestamp is used as the partition
@@ -208,20 +211,21 @@
     (or (hashmap-ref (: partitions) key)
         (let ((log (spawn ^chat-log id)))
           (: partitions (hashmap-set (: partitions) key log))
-          (hashmap-for-each
-           (lambda (id replica)
+          (for-each
+           (lambda (replica)
              (let ((replica* (spawn ^partition-replica replica key)))
-               (: log 'add-replica id replica*)))
+               (: log 'add-replica replica*)))
            (: replicas))
           log)))
   (define (partition-for-time time)
     (partition-ref (floor (/ time period))))
   (methods
-   ((add-replica id replica)
-    (: replicas (hashmap-set (: replicas) id replica))
+   ((replica-id) id)
+   ((add-replica replica)
+    (: replicas (cons replica (: replicas)))
     (hashmap-for-each (lambda (key log)
                         (let ((replica* (spawn ^partition-replica replica key)))
-                          (: log 'add-replica id replica*)))
+                          (: log 'add-replica replica*)))
                       (: partitions)))
    ((refresh id key)
     (: (partition-ref key) 'refresh id))
@@ -235,8 +239,8 @@
                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
                                     '() (: partitions))
                       (lambda (a b) (< (car a) (car b))))))
-   ((post from contents #:optional (now (current-time)))
-    (: (partition-for-time now) 'post from now contents))
+   ((post contents #:optional (now (current-time)))
+    (: (partition-for-time now) 'post spn now contents))
    ((edit msgid created contents #:optional (now (current-time)))
     (: (partition-for-time created) 'edit msgid now contents))
    ((delete msgid created #:optional (now (current-time)))
