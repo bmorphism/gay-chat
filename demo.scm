@@ -30,10 +30,6 @@
 (define id-bob (with-vat vat-bob (spawn ^identity "Bob")))
 (define id-carol (with-vat vat-carol (spawn ^identity "Carol")))
 
-(define pubkey-alice (with-vat vat-alice (: id-alice 'public-key)))
-(define pubkey-bob (with-vat vat-bob (: id-bob 'public-key)))
-(define pubkey-carol (with-vat vat-carol (: id-carol 'public-key)))
-
 (define chat-alice (with-vat vat-alice (spawn ^chat-room id-alice)))
 (define chat-bob (with-vat vat-bob (spawn ^chat-room id-bob)))
 (define chat-carol (with-vat vat-carol (spawn ^chat-room id-carol)))
