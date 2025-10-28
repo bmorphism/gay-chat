@@ -90,7 +90,8 @@
 (with-vat vat-alice
   (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-bob))
   (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-carol)))
-(sleep .5) ; sleep a bit to avoid crossed hellos
+;; Sleep a bit to avoid crossed hello exceptions in the output.
+(sleep .5)
 (with-vat vat-bob
   (: chat-bob 'add-replica (: mycapn-bob 'enliven sturdyref-alice)))
 (with-vat vat-carol
