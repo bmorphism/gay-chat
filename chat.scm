@@ -244,8 +244,7 @@
   (define private-key (: id 'private-key))
   (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
-  ;;(define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
-  (define replica-id spn)
+  (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
   (define group (spawn ^group replica-id private-key))
   (: group 'set-spn spn)
   (define (^partition-replica become replica key)
