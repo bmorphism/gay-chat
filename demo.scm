@@ -21,77 +21,97 @@
   (format #t "# Chat log for ~a\n" title)
   (newline)
   (for-each (match-lambda
-              ((id created modified deleted from contents reacts)
-               (cond
-                (deleted
-                 (format #t "<~a>\t--- deleted ---\n" from))
-                (else
-                 (format #t "<~a>\t~a" from contents)
-                 (unless (null? reacts)
-                   (display "\t[")
-                   (for-each (match-lambda
-                               ((char . who)
-                                (format #t " ~ax~a" char (length who))))
-                             reacts)
-                   (display " ]"))
-                 (newline)))))
+              ((id author created modified deleted contents reacts)
+               (let ((name (author-name author)))
+                 (cond
+                  (deleted
+                   (format #t "<~a>\t--- deleted ---\n" name))
+                  (else
+                   (format #t "<~a>\t~a" name contents)
+                   (unless (null? reacts)
+                     (display "\t[")
+                     (for-each (match-lambda
+                                 ((char . who)
+                                  (format #t " ~ax~a" char (length who))))
+                               reacts)
+                     (display " ]"))
+                   (newline))))))
             messages)
   (newline))
 
+(define (author-name pubkey)
+  (cond
+   ((equal? pubkey pubkey-alice) "Alice")
+   ((equal? pubkey pubkey-bob) "Bob")
+   ((equal? pubkey pubkey-carol) "Carol")
+   (else "?????")))
+
 (define vat (spawn-vat))
 
-(define alice (with-vat vat (spawn ^chat-room "Alice")))
-(define bob (with-vat vat (spawn ^chat-room "Bob")))
-(define carol (with-vat vat (spawn ^chat-room "Carol")))
+(define id-alice (with-vat vat (spawn ^identity "Alice")))
+(define id-bob (with-vat vat (spawn ^identity "Bob")))
+(define id-carol (with-vat vat (spawn ^identity "Carol")))
+
+(define pubkey-alice (with-vat vat (: id-alice 'public-key)))
+(define pubkey-bob (with-vat vat (: id-bob 'public-key)))
+(define pubkey-carol (with-vat vat (: id-carol 'public-key)))
+
+(define chat-alice (with-vat vat (spawn ^chat-room id-alice)))
+(define chat-bob (with-vat vat (spawn ^chat-room id-bob)))
+(define chat-carol (with-vat vat (spawn ^chat-room id-carol)))
 
 ;; Alice is connected Bob and Carol.  Bob and Carol are not connected
 ;; to each other.
 (with-vat vat
-  (: alice 'add-replica bob)
-  (: alice 'add-replica carol)
+  (: chat-alice 'add-replica chat-bob)
+  (: chat-alice 'add-replica chat-carol)
 
-  (: bob 'add-replica alice)
-  ;; (: bob 'add-replica "baz" carol)
+  (: chat-bob 'add-replica chat-alice)
+  ;; (: chat-bob 'add-replica "baz" chat-carol)
 
-  (: carol 'add-replica alice)
-  ;; (: carol 'add-replica "bar" bob)
+  (: chat-carol 'add-replica chat-alice)
+  ;; (: chat-carol 'add-replica "bar" chat-bob)
   )
 
 ;; Initial messages.
-(with-vat vat (<-np alice 'post "Hello"))
+(with-vat vat (<-np chat-alice 'post "Hello"))
 (with-vat vat
-  (<-np bob 'post "Hey, Alice!")
-  (<-np carol 'post "Hey everyone!")
-  (<-np bob 'post "asdf"))
-(with-vat vat (<-np alice 'post "This is a neat chat demo!"))
-(with-vat vat (<-np carol 'post "Yeah, it's so grood."))
+  (<-np chat-bob 'post "Hey, Alice!")
+  (<-np chat-carol 'post "Hey everyone!")
+  (<-np chat-bob 'post "asdf"))
+(with-vat vat (<-np chat-alice 'post "This is a neat chat demo!"))
+(with-vat vat (<-np chat-carol 'post "Yeah, it's so grood."))
 
 (sleep 1)
 
 ;; Render result for each peer.
 (with-vat vat
-  (render-chat "Alice" (: alice 'ref-all))
-  (render-chat "Bob" (: bob 'ref-all))
-  (render-chat "Carol" (: carol 'ref-all)))
+  (render-chat "Alice" (: chat-alice 'ref-all))
+  (render-chat "Bob" (: chat-bob 'ref-all))
+  (render-chat "Carol" (: chat-carol 'ref-all)))
 
 ;; Edit, delete, and react.
 (with-vat vat
-  (let lp ((messages (: bob 'ref-all)))
+  (let lp ((messages (: chat-bob 'ref-all)))
     (match messages
       (() #t)
-      (((id created modified deleted from contents reacts) . messages)
+      (((id author created modified deleted contents reacts) . messages)
        (cond
-        ((and (equal? from "Alice") (equal? contents "Hello"))
-         (<-np bob 'react id created #\👋)
-         (<-np carol 'react id created #\👋))
-        ((and (equal? from "Bob") (equal? contents "asdf"))
-         (<-np bob 'delete id created))
-        ((and (equal? from "Alice") (equal? contents "This is a neat chat demo!"))
-         (<-np bob 'react id created #\💯)
-         (<-np carol 'react id created #\👎)
-         (<-np carol 'unreact id created #\👎))
-        ((and (equal? from "Carol") (equal? contents "Yeah, it's so grood."))
-         (<-np carol 'edit id created "Yeah, it's so good!")))
+        ((and (equal? (author-name author) "Alice")
+              (equal? contents "Hello"))
+         (<-np chat-bob 'react id created #\👋)
+         (<-np chat-carol 'react id created #\👋))
+        ((and (equal? (author-name author) "Bob")
+              (equal? contents "asdf"))
+         (<-np chat-bob 'delete id created))
+        ((and (equal? (author-name author) "Alice")
+              (equal? contents "This is a neat chat demo!"))
+         (<-np chat-bob 'react id created #\💯)
+         (<-np chat-carol 'react id created #\👎)
+         (<-np chat-carol 'unreact id created #\👎))
+        ((and (equal? (author-name author) "Carol")
+              (equal? contents "Yeah, it's so grood."))
+         (<-np chat-carol 'edit id created "Yeah, it's so good!")))
        (lp messages)))))
 
 (display "\nSome time later...\n\n\n")
@@ -99,6 +119,6 @@
 
 ;; Render result for each peer.
 (with-vat vat
-  (render-chat "Alice" (: alice 'ref-all))
-  (render-chat "Bob" (: bob 'ref-all))
-  (render-chat "Carol" (: carol 'ref-all)))
+  (render-chat "Alice" (: chat-alice 'ref-all))
+  (render-chat "Bob" (: chat-bob 'ref-all))
+  (render-chat "Carol" (: chat-carol 'ref-all)))

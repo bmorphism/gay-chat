@@ -23,15 +23,19 @@
 (define-module (crdt)
   #:use-module ((goblins) #:hide ($))
   #:use-module ((goblins) #:select (($ . :)))
+  #:use-module (goblins abstract-types)
   #:use-module (goblins actor-lib cell)
   #:use-module (goblins actor-lib methods)
   #:use-module (goblins actor-lib on)
+  #:use-module (goblins contrib syrup)
+  #:use-module (goblins utils crypto)
   #:use-module (goblins utils hashmap)
   #:use-module (hlc)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
-  #:export (^crdt))
+  #:export (^crdt
+            ^crypto-crdt))
 
 (define (hashmap-keys h)
   (hashmap-fold (lambda (k v memo) (cons k memo)) '() h))
@@ -86,6 +90,9 @@
                  ((? negative?) (lp ids #t))
                  (_ #f)))))))))))
 
+(define (identity2 a b) a)
+(define (identity3 a b c) c)
+
 ;; TODO: Use a hybrid op/state-based approach where replicas coming
 ;; online can sync the entire state at once and then receive
 ;; incremental updates while they remain online.
@@ -95,12 +102,17 @@
 ;;
 ;; TODO: Byzantine fault tolerance.
 ;;
-;; IDs must be unique amongst processes editing the CRDT.  IDs are
-;; ephemeral and should be generated fresh for each editing session.
-;; Note that a replica ID is *not* the same as a user ID.  Any given
-;; user could have multiple devices in use, or multiple browser tabs
-;; open, and each should have a different replica ID.
-(define-actor (^crdt become id #:key init (prepare identity) effect (query identity))
+;; Replica IDs must be unique amongst processes editing the CRDT.
+;; Replica IDs are ephemeral and should be generated fresh for each
+;; editing session.  Note that a replica ID is *not* the same as a
+;; user ID.  Any given user could have multiple devices in use, or
+;; multiple browser tabs open, and each should have a different
+;; replica ID.
+(define-actor (^crdt become replica-id #:key
+                     init
+                     (prepare identity2)
+                     (effect identity3)
+                     (query identity))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
   (define vclock (spawn ^cell empty-vclock))     ; vector clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
@@ -108,15 +120,15 @@
   (define prev (spawn ^cell empty-vclock)) ; immediate causal predecessors
   (define state (spawn ^cell init))     ; accumulated internal state
   (define (clock-ref id)
-    (or (hashmap-ref (: vclock) id) (make-clock id)))
+    (or (hashmap-ref (: vclock) id) (make-clock replica-id)))
   (define (tick!)
-    (let ((new (clock-tick (clock-ref id))))
-      (: vclock (hashmap-set (: vclock) id new))
+    (let ((new (clock-tick (clock-ref replica-id))))
+      (: vclock (hashmap-set (: vclock) replica-id new))
       new))
   (define (join! timestamp)
-    (let ((ours (clock-ref id)))
+    (let ((ours (clock-ref replica-id)))
       (: vclock
-         (hashmap-set (hashmap-set (: vclock) id (clock-join ours timestamp))
+         (hashmap-set (hashmap-set (: vclock) replica-id (clock-join ours timestamp))
                       (clock-id timestamp) timestamp))))
   (define (append! event)
     (: log (hashmap-set (: log) (event-id event) event)))
@@ -173,9 +185,13 @@
                   (: pending new)
                   (lp new))))
           ;; Notify other replicas.
-          (hashmap-for-each (lambda (_ r) (<-np r 'refresh id)) (: replicas))))))
+          (hashmap-for-each
+           (lambda (_ r)
+             (unless (eq? r replica)
+               (<-np r 'refresh replica-id)))
+           (: replicas))))))
   (methods
-   ((replica-id) id)
+   ((replica-id) replica-id)
    ;; Add a new replica.
    ;;
    ;; TODO: Remove replica on severance.
@@ -184,8 +200,8 @@
       (: replicas (hashmap-set (: replicas) id* replica))
       (sync! replica)))
    ;; Request to refresh using a specific replica.
-   ((refresh who)
-    (and=> (hashmap-ref (: replicas) who) sync!))
+   ((refresh replica-id)
+    (and=> (hashmap-ref (: replicas) replica-id) sync!))
    ;; Collect and return a subset of events with timestamps newer than
    ;; the given vector clock.  Used by replicas to find new events and
    ;; reach eventual consistency.
@@ -218,12 +234,63 @@
    ((commit exp)
     ;; Advance our clock and create a new event.
     (let* ((event-id (tick!))
-           (event (make-event event-id (: prev) (prepare exp))))
+           (prepared (prepare event-id exp))
+           (event (make-event event-id (: prev) prepared)))
       (append! event)
-      (update! event-id exp)
+      (update! event-id prepared)
       ;; The log branches are now merged into one.
       (: prev (clock->vclock event-id))
       ;; Notify replicas that we have fresh data.
-      (hashmap-for-each (lambda (_ r) (<-np r 'refresh id)) (: replicas))))
+      (hashmap-for-each
+       (lambda (_ r) (<-np r 'refresh replica-id))
+       (: replicas))))
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))))
+
+(define marshallers
+  (list (cons clock?
+              (match-lambda
+                (($ <clock> real logical id)
+                 (make-tagged 'clock (list real logical id)))))
+        (cons char?
+              (lambda (ch)
+                (make-tagged 'char (list (char->integer ch)))))))
+(define unmarshallers
+  (list (cons (lambda (label) (eq? label 'clock))
+              %make-clock)
+        (cons (lambda (label) (eq? label 'char))
+              integer->char)))
+
+;; Wrapper CRDT that signs and verifies all operations.
+(define-actor (^crypto-crdt become replica-id private-key #:key
+                            init
+                            (prepare identity2)
+                            (effect identity3)
+                            (query identity))
+  (define public-key (key-pair->public-key private-key))
+  (define (prepare* timestamp exp)
+    ;; Add timestamp to the message to prevent replay attacks.
+    (let* ((data (syrup-encode (list timestamp exp) #:marshallers marshallers))
+           (sig (sign data private-key)))
+      (list public-key sig data)))
+  (define (effect* timestamp exp prev)
+    (match exp
+      ((public-key sig data)
+       (let ((public-key* (captp-public-key->crypto-public-key public-key))
+             (sig (captp-signature->crypto-signature sig)))
+         (if (verify sig data public-key*)
+             (match (syrup-decode data #:unmarshallers unmarshallers)
+               ((timestamp* exp)
+                (if (equal? timestamp timestamp*)
+                    (effect timestamp public-key exp prev)
+                    prev)))
+             ;; TODO: Probably should do something other than silently
+             ;; ignoring the message so Mallet can be held accountable
+             ;; for their attempt at deception.
+             prev)))
+      (_ prev)))
+  (spawn ^crdt replica-id
+         #:init init
+         #:prepare prepare*
+         #:effect effect*
+         #:query query))

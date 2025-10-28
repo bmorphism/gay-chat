@@ -26,7 +26,11 @@
 
 (define-module (hlc)
   #:use-module (ice-9 match)
-  #:export (make-clock
+  #:use-module (srfi srfi-9)
+  #:export (<clock>
+            %make-clock
+            make-clock
+            clock?
             clock-real
             clock-logical
             clock-id
@@ -36,28 +40,28 @@
             clock-compare-partial
             clock<?))
 
-;; HLCs are tuples of real time (non-negative int), logical time
-;; (non-negative int), and machine ID (string).
-(define (%make-clock real logical id) (vector real logical id))
-(define (clock-real ts) (vector-ref ts 0))
-(define (clock-logical ts) (vector-ref ts 1))
-(define (clock-id ts) (vector-ref ts 2))
+(define-record-type <clock>
+  (%make-clock real logical id)
+  clock?
+  (real clock-real)       ; int
+  (logical clock-logical) ; int
+  (id clock-id))          ; string
 
 (define (make-clock id)
   (%make-clock (current-time) 0 id))
 
 (define* (clock-tick clock #:optional (now (current-time)))
   (match clock
-    (#(real logical id)
-     ;; The real time can never go backwards, even if the system clock
-     ;; does.
+    (($ <clock> real logical id)
+     ;; The real time component can never go backwards, even if the
+     ;; system clock does.
      (if (> now real)
          (%make-clock now 0 id)
          (%make-clock real (1+ logical) id)))))
 
 (define* (clock-join clock other #:optional (now (current-time)))
-  (match-let ((#(real logical id) clock)
-              (#(real* logical* _) other))
+  (match-let ((($ <clock> real logical id) clock)
+              (($ <clock> real* logical* _) other))
     (cond
      ;; System time is ahead of both clocks.
      ((and (> now real) (> now real*))
@@ -74,8 +78,8 @@
 
 ;; Total order comparison, using ids to break ties.
 (define (clock-compare a b)
-  (match-let ((#(real logical id) a)
-              (#(real* logical* id*) b))
+  (match-let ((($ <clock> real logical id) a)
+              (($ <clock> real* logical* id*) b))
     ;; Order of priority: real time, logical time, and then finally
     ;; the ID string as a last resort to determine a winner in the
     ;; concurrent case.
@@ -89,8 +93,8 @@
 
 ;; Partial order comparison.
 (define (clock-compare-partial a b)
-  (match-let ((#(real logical id) a)
-              (#(real* logical* id*) b))
+  (match-let ((($ <clock> real logical id) a)
+              (($ <clock> real* logical* id*) b))
     (if (= real real*)
         (- logical logical*)
         (- real real*))))

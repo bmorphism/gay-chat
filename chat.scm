@@ -28,12 +28,14 @@
   #:use-module (goblins actor-lib cell)
   #:use-module (goblins actor-lib methods)
   #:use-module (goblins contrib base64)
+  #:use-module (goblins contrib syrup)
   #:use-module (goblins utils crypto)
   #:use-module (goblins utils hashmap)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
-  #:export (^chat-room))
+  #:export (^identity
+            ^chat-room))
 
 
 ;;;
@@ -54,51 +56,51 @@
          register))))
 
 (define-record-type <message>
-  (%make-message id created modified deleted from contents reacts)
+  (%make-message id author created modified deleted contents reacts)
   message?
   (id message-id)             ; HLC
+  (author message-author)     ; pubkey
   (created message-created)   ; epoch time
   (modified message-modified) ; epoch time | #f
   (deleted message-deleted)   ; epoch time | #f
-  (from message-from)         ; string (for now)
   (contents message-contents) ; LWW register
   (reacts message-reacts))    ; char -> user -> LWW register
 
-(define (make-message id created from contents)
-  (%make-message id created #f #f from
+(define (make-message id author created contents)
+  (%make-message id author created #f #f
                  (make-lww-register id contents)
                  (make-hashmap)))
 
 (define* (message-edit msg timestamp modified new)
   (match msg
-    (($ <message> id created _ deleted from contents reacts)
+    (($ <message> id author created _ deleted contents reacts)
      (let ((contents* (lww-register-set contents timestamp new)))
        (if (eq? contents contents*)
            msg
-           (%make-message id created modified deleted from contents* reacts))))))
+           (%make-message id author created modified deleted contents* reacts))))))
 
 (define* (message-delete msg deleted)
   (match msg
-    (($ <message> id created modified #f from contents reacts)
-     (%make-message id created modified deleted from contents reacts))
+    (($ <message> id author created modified #f contents reacts)
+     (%make-message id author created modified deleted contents reacts))
     (_ msg)))
 
 (define (%message-react msg timestamp reactor char value)
   (match msg
-    (($ <message> id created modified deleted from contents reacts)
+    (($ <message> id author created modified deleted contents reacts)
      (let ((char-reacts (or (hashmap-ref reacts char) (make-hashvmap))))
        (match (hashmap-ref char-reacts reactor)
          (#f
           (let* ((register (make-lww-register timestamp value))
                  (char-reacts (hashmap-set char-reacts reactor register)))
-            (%make-message id created modified deleted from contents
+            (%make-message id author created modified deleted contents
                            (hashmap-set reacts char char-reacts))))
          (register
           (let ((new (lww-register-set register timestamp value)))
             (if (eq? register new)
                 msg
                 (let ((char-reacts (hashmap-set char-reacts reactor new)))
-                  (%make-message id created modified deleted from contents
+                  (%make-message id author created modified deleted contents
                                  (hashmap-set reacts char char-reacts)))))))))))
 
 (define (message-react msg timestamp reactor char)
@@ -115,16 +117,60 @@
 ;;; Actors
 ;;;
 
-;; TODO: Sign messages.
-;;
-;; TODO: Only allow editing by the user that posted the message.
-;;
-;; TODO: Certificate capabilities generally.
-(define (^chat-log become id)
+(define-actor (^identity become spn #:optional (private-key (generate-key-pair)))
+  (define public-key (key-pair->public-key private-key))
+  (methods
+   ((spn) spn)
+   ((private-key) private-key)
+   ((public-key) public-key)
+   ((sign data) (sign data private-key))))
+
+;; A group is a CRDT for associating cryptographic identity with
+;; self-proposed names.
+;; (define-actor (^group become replica-id)
+;;   (define (query members)
+;;     (hashmap-fold
+;;      (lambda (pubkey spn memo)
+;;        (hashmap-set memo pubkey (lww-register-value spn)))
+;;      (make-hashmap) members))
+;;   (define (effect timestamp exp members)
+;;     (match exp
+;;       (('set-spn pubkey signature data)
+;;        (let ((pubkey (bytevector->crypto-public-key pubkey)))
+;;          (if (verify signature data pubkey)
+;;              ;; The name might not be valid UTF-8, in which case we
+;;              ;; should ignore the message entirely.
+;;              (with-exception-handler (lambda (exn) members)
+;;                (lambda ()
+;;                  (let* ((name (utf8->string data))
+;;                         (r (hashmap-ref members pubkey))
+;;                         (r* (lww-register-set r timestamp name)))
+;;                    (if (eq? r r*)
+;;                        members
+;;                        (hashmap-set members pubkey r*))))))))
+;;       (_ members)))
+;;   (define crdt
+;;     (spawn ^crdt replica-id
+;;            #:init (make-hashmap)
+;;            #:query query
+;;            #:effect effect))
+;;   (methods
+;;    ((add-replica replica)
+;;     (: crdt 'add-replica replica))
+;;    ((refresh replica-id)
+;;     (: crdt 'refresh replica-id))
+;;    ((events-since vclock)
+;;     (: crdt 'events-since vclock))
+;;    ((ref)
+;;     (: crdt 'ref))
+;;    ((set-spn pubkey signature data)
+;;     (: crdt 'commit `(set-spn ,pubkey ,signature ,data)))))
+
+(define-actor (^chat-log become replica-id private-key)
   (define (query messages)
     (map (match-lambda
-           (($ <message> id created modified deleted from contents reacts)
-            (list id created modified deleted from
+           (($ <message> id author created modified deleted contents reacts)
+            (list id author created modified deleted
                   (and (not deleted)
                        (lww-register-value contents))
                   (if deleted
@@ -142,46 +188,53 @@
                        '() reacts)))))
          (sort (hashmap-fold (lambda (id msg memo) (cons msg memo)) '() messages)
                message<?)))
-  (define (effect timestamp exp messages)
+  (define (effect timestamp public-key exp messages)
     (match exp
-      (('post created from contents)
+      (('post author created contents)
        (hashmap-set messages timestamp
-                    (make-message timestamp created from contents)))
-      (('edit id at contents)
-       (hashmap-set messages id
-                    (message-edit (hashmap-ref messages id)
-                                  timestamp at contents)))
-      (('delete id at)
-       (hashmap-set messages id
-                    (message-delete (hashmap-ref messages id) at)))
-      (('react id char)
-       (hashmap-set messages id
-                    (message-react (hashmap-ref messages id)
+                    (make-message timestamp author created contents)))
+      (('edit msgid when contents)
+       (let ((msg (hashmap-ref messages msgid)))
+         ;; Only the original author can edit.
+         (if (equal? (message-author msg) public-key)
+             (hashmap-set messages msgid
+                          (message-edit msg timestamp when contents))
+             messages)))
+      (('delete msgid when)
+       (let ((msg (hashmap-ref messages msgid)))
+         ;; Only the original author can delete.
+         (if (equal? (message-author msg) public-key)
+             (hashmap-set messages msgid (message-delete msg when))
+             messages)))
+      (('react msgid char)
+       (hashmap-set messages msgid
+                    (message-react (hashmap-ref messages msgid)
                                    timestamp
                                    (clock-id timestamp)
                                    char)))
-      (('unreact id char)
-       (hashmap-set messages id
-                    (message-unreact (hashmap-ref messages id)
+      (('unreact msgid char)
+       (hashmap-set messages msgid
+                    (message-unreact (hashmap-ref messages msgid)
                                      timestamp
                                      (clock-id timestamp)
-                                     char)))))
+                                     char)))
+      (_ messages)))
   (define crdt
-    (spawn ^crdt id
+    (spawn ^crypto-crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
            #:effect effect))
   (methods
    ((add-replica replica)
     (: crdt 'add-replica replica))
-   ((refresh id)
-    (: crdt 'refresh id))
+   ((refresh replica-id)
+    (: crdt 'refresh replica-id))
    ((events-since vclock)
     (: crdt 'events-since vclock))
    ((ref)
     (: crdt 'ref))
-   ((post from when contents)
-    (: crdt 'commit `(post ,when ,from ,contents)))
+   ((post author when contents)
+    (: crdt 'commit `(post ,author ,when ,contents)))
    ((edit msgid when contents)
     (: crdt 'commit `(edit ,msgid ,when ,contents)))
    ((delete msgid when)
@@ -191,9 +244,12 @@
    ((unreact msgid char)
     (: crdt 'commit `(unreact ,msgid ,char)))))
 
-(define-actor (^chat-room become spn #:optional (period (* 30 60)))
+(define-actor (^chat-room become id #:optional (period (* 30 60)))
+  (define spn (: id 'spn))
+  (define private-key (: id 'private-key))
+  (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
-  (define id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
   (define (^partition-replica become replica key)
     (methods
      ((replica-id) (<- replica 'replica-id))
@@ -209,7 +265,7 @@
   (define partitions (spawn ^cell (make-hashvmap)))
   (define (partition-ref key)
     (or (hashmap-ref (: partitions) key)
-        (let ((log (spawn ^chat-log id)))
+        (let ((log (spawn ^chat-log replica-id private-key)))
           (: partitions (hashmap-set (: partitions) key log))
           (for-each
            (lambda (replica)
@@ -220,13 +276,14 @@
   (define (partition-for-time time)
     (partition-ref (floor (/ time period))))
   (methods
-   ((replica-id) id)
+   ((replica-id) replica-id)
    ((add-replica replica)
     (: replicas (cons replica (: replicas)))
-    (hashmap-for-each (lambda (key log)
-                        (let ((replica* (spawn ^partition-replica replica key)))
-                          (: log 'add-replica replica*)))
-                      (: partitions)))
+    (hashmap-for-each
+     (lambda (key log)
+       (let ((replica* (spawn ^partition-replica replica key)))
+         (: log 'add-replica replica*)))
+     (: partitions)))
    ((refresh id key)
     (: (partition-ref key) 'refresh id))
    ((events-since vclock key)
@@ -240,7 +297,7 @@
                                     '() (: partitions))
                       (lambda (a b) (< (car a) (car b))))))
    ((post contents #:optional (now (current-time)))
-    (: (partition-for-time now) 'post spn now contents))
+    (: (partition-for-time now) 'post public-key now contents))
    ((edit msgid created contents #:optional (now (current-time)))
     (: (partition-for-time created) 'edit msgid now contents))
    ((delete msgid created #:optional (now (current-time)))
