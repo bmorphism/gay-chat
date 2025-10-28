@@ -69,7 +69,7 @@
 (define (make-message id author created contents)
   (%make-message id author created #f #f
                  (make-lww-register id contents)
-                 (make-hashmap)))
+                 (make-hashvmap)))
 
 (define* (message-edit msg timestamp modified new)
   (match msg
@@ -88,7 +88,7 @@
 (define (%message-react msg timestamp reactor char value)
   (match msg
     (($ <message> id author created modified deleted contents reacts)
-     (let ((char-reacts (or (hashmap-ref reacts char) (make-hashvmap))))
+     (let ((char-reacts (or (hashmap-ref reacts char) (make-hashmap))))
        (match (hashmap-ref char-reacts reactor)
          (#f
           (let* ((register (make-lww-register timestamp value))
@@ -208,15 +208,11 @@
       (('react msgid char)
        (hashmap-set messages msgid
                     (message-react (hashmap-ref messages msgid)
-                                   timestamp
-                                   (clock-id timestamp)
-                                   char)))
+                                   timestamp public-key char)))
       (('unreact msgid char)
        (hashmap-set messages msgid
                     (message-unreact (hashmap-ref messages msgid)
-                                     timestamp
-                                     (clock-id timestamp)
-                                     char)))
+                                     timestamp public-key char)))
       (_ messages)))
   (define crdt
     (spawn ^crypto-crdt replica-id private-key
@@ -248,7 +244,8 @@
   (define private-key (: id 'private-key))
   (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
-  (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  ;;(define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  (define replica-id spn)
   (define group (spawn ^group replica-id private-key))
   (: group 'set-spn spn)
   (define (^partition-replica become replica key)

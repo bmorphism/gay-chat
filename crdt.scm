@@ -65,10 +65,36 @@
   (parents event-parents) ; vclock
   (exp event-exp))        ; any
 
-(define (event->list event)
+(define (marshall-clock clock)
+  (match clock
+    (($ <clock> real logical id)
+     (list real logical id))))
+
+(define (marshall-vclock vclock)
+  (hashmap-fold (lambda (id clock memo)
+                  (cons (marshall-clock clock) memo))
+                '() vclock))
+
+(define (marshall-event event)
   (match event
     (($ <event> id parents exp)
-     (list id (vclock->list parents) exp))))
+     (list (marshall-clock id) (marshall-vclock parents) exp))))
+
+(define (unmarshall-clock clock)
+  (match clock
+    ((real logical id)
+     (%make-clock real logical id))))
+
+(define (unmarshall-vclock vclock)
+  (fold (lambda (clock memo)
+          (let ((clock (unmarshall-clock clock)))
+            (hashmap-set memo (clock-id clock) clock)))
+        (make-hashmap) vclock))
+
+(define (unmarshall-event event)
+  (match event
+    ((id parents exp)
+     (make-event (unmarshall-clock id) (unmarshall-vclock parents) exp))))
 
 ;; a < b when all node clocks in a are <= the associated clocks in b
 ;; and at least one clock in a is < than the associated clock in b.
@@ -164,17 +190,16 @@
     ;; TODO: Do we need to send the complete vector clock (which grows
     ;; without bound) or can we just send the direct predecessor
     ;; clocks?
-    (let-on ((events (<- replica 'events-since (: vclock))))
+    (let-on ((events (<- replica 'events-since (marshall-vclock (: vclock)))))
       (let ((pending*
              ;; Append the new events, filtering out events we
              ;; already know about.
              (fold (lambda (event memo)
-                     (match event
-                       ((id parents exp)
-                        (if (and (not (hashmap-ref (: log) id))
-                                 (not (hashmap-ref memo id)))
-                            (let ((event (make-event id (list->vclock parents) exp)))
-                              (hashmap-set memo id event))
+                     (match (unmarshall-event event)
+                       ((and event ($ <event> event-id))
+                        (if (and (not (hashmap-ref (: log) event-id))
+                                 (not (hashmap-ref memo event-id)))
+                            (hashmap-set memo event-id event)
                             memo))))
                    (: pending) events)))
         (unless (eq? (: pending) pending*)
@@ -206,30 +231,30 @@
    ;; the given vector clock.  Used by replicas to find new events and
    ;; reach eventual consistency.
    ((events-since vclock*)
-    (define (visit-parents parents memo)
-      (hashmap-fold (lambda (id event-id memo)
-                      (visit (hashmap-ref (: log) event-id) memo))
-                    memo parents))
-    (define (visit event memo)
-      (match event
-        (($ <event> event-id parents exp)
-         (match (hashmap-ref memo event-id)
-           ;; Event isn't already in result set; continue.
-           (#f
-            (let ((clock (hashmap-ref vclock* (clock-id event-id))))
-              ;; Continue as long as the event did not happen before the
-              ;; last recorded event seen by the caller.
-              (if (or (not clock)
-                      (negative? (clock-compare-partial clock event-id)))
-                  (let ((e (event->list event)))
-                    (visit-parents parents (hashmap-set memo event-id e)))
-                  memo)))
-           ;; Event is already in result set; terminate.
-           (_ memo)))))
-    (hashmap-fold (lambda (id event result)
-                    (cons event result))
-                  '()
-                  (visit-parents (: prev) (make-hashmap))))
+    (let ((vclock* (unmarshall-vclock vclock*)))
+      (define (visit-parents parents memo)
+        (hashmap-fold (lambda (id event-id memo)
+                        (visit (hashmap-ref (: log) event-id) memo))
+                      memo parents))
+      (define (visit event memo)
+        (match event
+          (($ <event> event-id parents exp)
+           (match (hashmap-ref memo event-id)
+             ;; Event isn't already in result set; continue.
+             (#f
+              (let ((clock (hashmap-ref vclock* (clock-id event-id))))
+                ;; Continue as long as the event did not happen before the
+                ;; last recorded event seen by the caller.
+                (if (or (not clock)
+                        (negative? (clock-compare-partial clock event-id)))
+                    (visit-parents parents (hashmap-set memo event-id event))
+                    memo)))
+             ;; Event is already in result set; terminate.
+             (_ memo)))))
+      (hashmap-fold (lambda (id event result)
+                      (cons (marshall-event event) result))
+                    '()
+                    (visit-parents (: prev) (make-hashmap)))))
    ;; Commit a local event to the log.
    ((commit exp)
     ;; Advance our clock and create a new event.
