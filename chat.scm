@@ -127,44 +127,43 @@
 
 ;; A group is a CRDT for associating cryptographic identity with
 ;; self-proposed names.
-;; (define-actor (^group become replica-id)
-;;   (define (query members)
-;;     (hashmap-fold
-;;      (lambda (pubkey spn memo)
-;;        (hashmap-set memo pubkey (lww-register-value spn)))
-;;      (make-hashmap) members))
-;;   (define (effect timestamp exp members)
-;;     (match exp
-;;       (('set-spn pubkey signature data)
-;;        (let ((pubkey (bytevector->crypto-public-key pubkey)))
-;;          (if (verify signature data pubkey)
-;;              ;; The name might not be valid UTF-8, in which case we
-;;              ;; should ignore the message entirely.
-;;              (with-exception-handler (lambda (exn) members)
-;;                (lambda ()
-;;                  (let* ((name (utf8->string data))
-;;                         (r (hashmap-ref members pubkey))
-;;                         (r* (lww-register-set r timestamp name)))
-;;                    (if (eq? r r*)
-;;                        members
-;;                        (hashmap-set members pubkey r*))))))))
-;;       (_ members)))
-;;   (define crdt
-;;     (spawn ^crdt replica-id
-;;            #:init (make-hashmap)
-;;            #:query query
-;;            #:effect effect))
-;;   (methods
-;;    ((add-replica replica)
-;;     (: crdt 'add-replica replica))
-;;    ((refresh replica-id)
-;;     (: crdt 'refresh replica-id))
-;;    ((events-since vclock)
-;;     (: crdt 'events-since vclock))
-;;    ((ref)
-;;     (: crdt 'ref))
-;;    ((set-spn pubkey signature data)
-;;     (: crdt 'commit `(set-spn ,pubkey ,signature ,data)))))
+(define-actor (^group become replica-id private-key)
+  (define (query members)
+    (hashmap-fold
+     (lambda (public-key spn memo)
+       (hashmap-set memo public-key (lww-register-value spn)))
+     (make-hashmap) members))
+  (define (effect timestamp public-key exp members)
+    (match exp
+      (('set-spn name)
+       ;; The name might not be valid UTF-8, in which case we should
+       ;; ignore the message entirely.
+       (match (hashmap-ref members public-key)
+         (#f
+          (hashmap-set members public-key
+                       (make-lww-register timestamp name)))
+         (r
+          (let ((r* (lww-register-set r timestamp name)))
+            (if (eq? r r*)
+                members
+                (hashmap-set members public-key r*))))))
+      (_ members)))
+  (define crdt
+    (spawn ^crypto-crdt replica-id private-key
+           #:init (make-hashmap)
+           #:query query
+           #:effect effect))
+  (methods
+   ((add-replica replica)
+    (: crdt 'add-replica replica))
+   ((refresh replica-id)
+    (: crdt 'refresh replica-id))
+   ((events-since vclock)
+    (: crdt 'events-since vclock))
+   ((ref)
+    (: crdt 'ref))
+   ((set-spn name)
+    (: crdt 'commit `(set-spn ,name)))))
 
 (define-actor (^chat-log become replica-id private-key)
   (define (query messages)
@@ -250,11 +249,18 @@
   (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
   (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  (define group (spawn ^group replica-id private-key))
+  (: group 'set-spn spn)
   (define (^partition-replica become replica key)
     (methods
      ((replica-id) (<- replica 'replica-id))
      ((refresh id) (<-np replica 'refresh id key))
      ((events-since vclock) (<- replica 'events-since vclock key))))
+  (define (^group-replica become replica)
+    (methods
+     ((replica-id) (<- replica 'replica-id))
+     ((refresh id) (<-np replica 'group-refresh id))
+     ((events-since vclock) (<- replica 'group-events-since vclock))))
   (define replicas (spawn ^cell '()))
   ;; The chat log is partitioned by time to keep the size of each
   ;; individual CRDT small and allow for dropping entire chunks of
@@ -279,6 +285,7 @@
    ((replica-id) replica-id)
    ((add-replica replica)
     (: replicas (cons replica (: replicas)))
+    (: group 'add-replica (spawn ^group-replica replica))
     (hashmap-for-each
      (lambda (key log)
        (let ((replica* (spawn ^partition-replica replica key)))
@@ -288,14 +295,20 @@
     (: (partition-ref key) 'refresh id))
    ((events-since vclock key)
     (: (partition-ref key) 'events-since vclock))
+   ((group-refresh id)
+    (: group 'refresh id))
+   ((group-events-since vclock)
+    (: group 'events-since vclock))
    ((ref time)
-    (: (partition-ref time) 'ref))
+    (: (partition-for-time time) 'ref))
    ;; Mainly for testing.
    ((ref-all)
     (append-map (match-lambda ((_ . log) (: log 'ref)))
                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
                                     '() (: partitions))
                       (lambda (a b) (< (car a) (car b))))))
+   ((names) (: group 'ref))
+   ((set-spn name) (: group 'set-spn name))
    ((post contents #:optional (now (current-time)))
     (: (partition-for-time now) 'post public-key now contents))
    ((edit msgid created contents #:optional (now (current-time)))

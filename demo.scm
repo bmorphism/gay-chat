@@ -15,14 +15,15 @@
 (use-modules (chat)
              ((goblins) #:hide ($))
              ((goblins) #:select (($ . :)))
+             (goblins utils hashmap)
              (ice-9 match))
 
-(define* (render-chat title messages #:key debug?)
+(define (render-chat title names messages)
   (format #t "# Chat log for ~a\n" title)
   (newline)
   (for-each (match-lambda
               ((id author created modified deleted contents reacts)
-               (let ((name (author-name author)))
+               (let ((name (hashmap-ref names author "?????")))
                  (cond
                   (deleted
                    (format #t "<~a>\t--- deleted ---\n" name))
@@ -39,13 +40,6 @@
             messages)
   (newline))
 
-(define (author-name pubkey)
-  (cond
-   ((equal? pubkey pubkey-alice) "Alice")
-   ((equal? pubkey pubkey-bob) "Bob")
-   ((equal? pubkey pubkey-carol) "Carol")
-   (else "?????")))
-
 (define vat (spawn-vat))
 
 (define id-alice (with-vat vat (spawn ^identity "Alice")))
@@ -59,6 +53,12 @@
 (define chat-alice (with-vat vat (spawn ^chat-room id-alice)))
 (define chat-bob (with-vat vat (spawn ^chat-room id-bob)))
 (define chat-carol (with-vat vat (spawn ^chat-room id-carol)))
+
+(define (render-chats)
+  (with-vat vat
+    (render-chat "Alice" (: chat-alice 'names) (: chat-alice 'ref-all))
+    (render-chat "Bob" (: chat-alice 'names) (: chat-bob 'ref-all))
+    (render-chat "Carol" (: chat-alice 'names) (: chat-carol 'ref-all))))
 
 ;; Alice is connected Bob and Carol.  Bob and Carol are not connected
 ;; to each other.
@@ -83,42 +83,37 @@
 (with-vat vat (<-np chat-carol 'post "Yeah, it's so grood."))
 
 (sleep 1)
-
-;; Render result for each peer.
-(with-vat vat
-  (render-chat "Alice" (: chat-alice 'ref-all))
-  (render-chat "Bob" (: chat-bob 'ref-all))
-  (render-chat "Carol" (: chat-carol 'ref-all)))
+(render-chats)
 
 ;; Edit, delete, and react.
 (with-vat vat
-  (let lp ((messages (: chat-bob 'ref-all)))
-    (match messages
-      (() #t)
-      (((id author created modified deleted contents reacts) . messages)
-       (cond
-        ((and (equal? (author-name author) "Alice")
-              (equal? contents "Hello"))
-         (<-np chat-bob 'react id created #\👋)
-         (<-np chat-carol 'react id created #\👋))
-        ((and (equal? (author-name author) "Bob")
-              (equal? contents "asdf"))
-         (<-np chat-bob 'delete id created))
-        ((and (equal? (author-name author) "Alice")
-              (equal? contents "This is a neat chat demo!"))
-         (<-np chat-bob 'react id created #\💯)
-         (<-np chat-carol 'react id created #\👎)
-         (<-np chat-carol 'unreact id created #\👎))
-        ((and (equal? (author-name author) "Carol")
-              (equal? contents "Yeah, it's so grood."))
-         (<-np chat-carol 'edit id created "Yeah, it's so good!")))
-       (lp messages)))))
+  (let ((names (: chat-bob 'names)))
+    (let lp ((messages (: chat-bob 'ref-all)))
+      (match messages
+        (() #t)
+        (((id author created modified deleted contents reacts) . messages)
+         (cond
+          ((and (equal? (hashmap-ref names author) "Alice")
+                (equal? contents "Hello"))
+           (<-np chat-bob 'react id created #\👋)
+           (<-np chat-carol 'react id created #\👋)
+           ;; Bob cannot edit Carol's message
+           (<-np chat-bob 'edit id created "owo"))
+          ((and (equal? (hashmap-ref names author) "Bob")
+                (equal? contents "asdf"))
+           (<-np chat-bob 'delete id created))
+          ((and (equal? (hashmap-ref names author) "Alice")
+                (equal? contents "This is a neat chat demo!"))
+           (<-np chat-bob 'react id created #\💯)
+           (<-np chat-carol 'react id created #\👎)
+           (<-np chat-carol 'unreact id created #\👎))
+          ((and (equal? (hashmap-ref names author) "Carol")
+                (equal? contents "Yeah, it's so grood."))
+           (<-np chat-carol 'edit id created "Yeah, it's so good!")
+           ;; Alice cannot delete Carol's message.
+           (<-np chat-alice 'delete id created)))
+         (lp messages))))))
 
 (display "\nSome time later...\n\n\n")
 (sleep 1)
-
-;; Render result for each peer.
-(with-vat vat
-  (render-chat "Alice" (: chat-alice 'ref-all))
-  (render-chat "Bob" (: chat-bob 'ref-all))
-  (render-chat "Carol" (: chat-carol 'ref-all)))
+(render-chats)
