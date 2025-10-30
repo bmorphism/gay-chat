@@ -34,7 +34,14 @@
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
-  #:export (^crdt
+  #:export (make-event
+            event?
+            event-id
+            event-parents
+            event-timestamp
+            event-data
+
+            ^crdt
             ^crypto-crdt))
 
 (define (hashmap-keys h)
@@ -59,11 +66,12 @@
   (hashmap-set vclock (clock-id clock) clock))
 
 (define-record-type <event>
-  (make-event id parents exp)
+  (make-event id parents timestamp data)
   event?
-  (id event-id)           ; HLC
-  (parents event-parents) ; vclock
-  (exp event-exp))        ; any
+  (id event-id)               ; any
+  (parents event-parents)     ; list of id
+  (timestamp event-timestamp) ; HLC
+  (data event-data))          ; any
 
 (define (marshall-clock clock)
   (match clock
@@ -74,11 +82,6 @@
   (hashmap-fold (lambda (id clock memo)
                   (cons (marshall-clock clock) memo))
                 '() vclock))
-
-(define (marshall-event event)
-  (match event
-    (($ <event> id parents exp)
-     (list (marshall-clock id) (marshall-vclock parents) exp))))
 
 (define (unmarshall-clock clock)
   (match clock
@@ -91,10 +94,29 @@
             (hashmap-set memo (clock-id clock) clock)))
         (make-hashmap) vclock))
 
-(define (unmarshall-event event)
-  (match event
-    ((id parents exp)
-     (make-event (unmarshall-clock id) (unmarshall-vclock parents) exp))))
+(define marshallers
+  (list (cons event?
+              (match-lambda
+                (($ <event> id parents timestamp data)
+                 (make-tagged 'event (list id parents timestamp data)))))
+        (cons clock?
+              (match-lambda
+                (($ <clock> real logical id)
+                 (make-tagged 'clock (list real logical id)))))
+        (cons char?
+              (lambda (ch)
+                (make-tagged 'char (list (char->integer ch)))))))
+
+(define unmarshallers
+  (list (cons (lambda (label) (eq? label 'event)) make-event)
+        (cons (lambda (label) (eq? label 'clock)) %make-clock)
+        (cons (lambda (label) (eq? label 'char)) integer->char)))
+
+(define (encode x)
+  (syrup-encode x #:marshallers marshallers))
+
+(define (decode bv)
+  (syrup-decode bv #:unmarshallers unmarshallers))
 
 ;; a < b when all node clocks in a are <= the associated clocks in b
 ;; and at least one clock in a is < than the associated clock in b.
@@ -116,8 +138,12 @@
                  ((? negative?) (lp ids #t))
                  (_ #f)))))))))))
 
-(define (identity2 a b) a)
-(define (identity3 a b c) c)
+;; Default to using the timestamp as the unique event ID.
+(define (prepare/default timestamp parents data)
+  (make-event timestamp parents timestamp data))
+
+;; Default to doing absolutely nothing at all.
+(define (effect/default timestamp data prev) prev)
 
 ;; TODO: Use a hybrid op/state-based approach where replicas coming
 ;; online can sync the entire state at once and then receive
@@ -136,14 +162,14 @@
 ;; replica ID.
 (define-actor (^crdt become replica-id #:key
                      init
-                     (prepare identity2)
-                     (effect identity3)
+                     (prepare prepare/default)
+                     (effect effect/default)
                      (query identity))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
   (define vclock (spawn ^cell empty-vclock))     ; vector clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
   (define pending (spawn ^cell (make-hashmap))) ; pending events
-  (define prev (spawn ^cell empty-vclock)) ; immediate causal predecessors
+  (define heads (spawn ^cell empty-vclock)) ; immediate causal predecessors
   (define state (spawn ^cell init))     ; accumulated internal state
   (define (clock-ref id)
     (or (hashmap-ref (: vclock) id) (make-clock replica-id)))
@@ -169,7 +195,7 @@
     (hashmap-fold
      (lambda (event-id event pending)
        (match event
-         (($ <event> _ parents exp)
+         (($ <event> _ parents _ exp)
           (cond
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
@@ -179,9 +205,9 @@
             (update! event-id exp)
             ;; Check if this event is concurrent with the
             ;; predecessors.  If so, we have another branch to merge.
-            (if (vclock<? (: prev) parents)
-                (: prev (clock->vclock event-id))
-                (: prev (vclock-set (: prev) event-id)))
+            (if (vclock<? (: heads) parents)
+                (: heads (clock->vclock event-id))
+                (: heads (vclock-set (: heads) event-id)))
             (hashmap-remove pending event-id))
            ;; Predecessors aren't all here; do nothing.
            (else pending)))))
@@ -195,7 +221,7 @@
              ;; Append the new events, filtering out events we
              ;; already know about.
              (fold (lambda (event memo)
-                     (match (unmarshall-event event)
+                     (match (decode event)
                        ((and event ($ <event> event-id))
                         (if (and (not (hashmap-ref (: log) event-id))
                                  (not (hashmap-ref memo event-id)))
@@ -252,19 +278,18 @@
              ;; Event is already in result set; terminate.
              (_ memo)))))
       (hashmap-fold (lambda (id event result)
-                      (cons (marshall-event event) result))
+                      (cons (encode event) result))
                     '()
-                    (visit-parents (: prev) (make-hashmap)))))
+                    (visit-parents (: heads) (make-hashmap)))))
    ;; Commit a local event to the log.
    ((commit exp)
     ;; Advance our clock and create a new event.
     (let* ((event-id (tick!))
-           (prepared (prepare event-id exp))
-           (event (make-event event-id (: prev) prepared)))
+           (event (prepare event-id (: heads) exp)))
       (append! event)
-      (update! event-id prepared)
+      (update! event-id (event-data event))
       ;; The log branches are now merged into one.
-      (: prev (clock->vclock event-id))
+      (: heads (clock->vclock event-id))
       ;; Notify replicas that we have fresh data.
       (hashmap-for-each
        (lambda (_ r) (<-np r 'refresh replica-id))
@@ -272,39 +297,25 @@
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))))
 
-(define marshallers
-  (list (cons clock?
-              (match-lambda
-                (($ <clock> real logical id)
-                 (make-tagged 'clock (list real logical id)))))
-        (cons char?
-              (lambda (ch)
-                (make-tagged 'char (list (char->integer ch)))))))
-(define unmarshallers
-  (list (cons (lambda (label) (eq? label 'clock))
-              %make-clock)
-        (cons (lambda (label) (eq? label 'char))
-              integer->char)))
-
 ;; Wrapper CRDT that signs and verifies all operations.
 (define-actor (^crypto-crdt become replica-id private-key #:key
                             init
-                            (prepare identity2)
-                            (effect identity3)
+                            (prepare prepare/default)
+                            (effect effect/default)
                             (query identity))
   (define public-key (key-pair->public-key private-key))
-  (define (prepare* timestamp exp)
+  (define (prepare* timestamp parents exp)
     ;; Add timestamp to the message to prevent replay attacks.
-    (let* ((data (syrup-encode (list timestamp exp) #:marshallers marshallers))
+    (let* ((data (encode (list timestamp exp)))
            (sig (sign data private-key)))
-      (list public-key sig data)))
+      (make-event timestamp parents timestamp (list public-key sig data))))
   (define (effect* timestamp exp prev)
     (match exp
       ((public-key sig data)
        (let ((public-key* (captp-public-key->crypto-public-key public-key))
              (sig (captp-signature->crypto-signature sig)))
          (if (verify sig data public-key*)
-             (match (syrup-decode data #:unmarshallers unmarshallers)
+             (match (decode data)
                ((timestamp* exp)
                 (if (equal? timestamp timestamp*)
                     (effect timestamp public-key exp prev)
