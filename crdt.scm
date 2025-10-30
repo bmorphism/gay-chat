@@ -184,8 +184,10 @@
                       (clock-id timestamp) timestamp))))
   (define (append! event)
     (: log (hashmap-set (: log) (event-id event) event)))
-  (define (update! timestamp exp)
-    (: state (effect timestamp exp (: state))))
+  (define (update! event)
+    (match event
+      (($ <event> id parents timestamp data)
+       (: state (effect timestamp data (: state))))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
   (define (lookup-events event-ids)
@@ -197,14 +199,14 @@
     (hashmap-fold
      (lambda (event-id event pending)
        (match event
-         (($ <event> _ parents timestamp exp)
+         (($ <event> _ parents timestamp)
           (cond
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
             ;; Advance clock with every message delivered.
             (join! event-id)
             (append! event)
-            (update! event-id exp)
+            (update! event)
             ;; Check if this event is concurrent with the
             ;; predecessors.  If so, we have another branch to merge.
             ;;
@@ -290,12 +292,12 @@
                     '()
                     (visit-parents (: heads) (make-hashmap)))))
    ;; Commit a local event to the log.
-   ((commit exp)
+   ((commit data)
     ;; Advance our clock and create a new event.
     (let* ((event-id (tick!))
-           (event (prepare event-id (: heads) exp)))
+           (event (prepare event-id (: heads) data)))
       (append! event)
-      (update! event-id (event-data event))
+      (update! event)
       ;; The log branches are now merged into one.
       (: heads (list event-id))
       ;; Notify replicas that we have fresh data.
