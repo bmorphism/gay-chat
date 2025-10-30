@@ -169,8 +169,8 @@
   (define vclock (spawn ^cell empty-vclock))     ; vector clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
   (define pending (spawn ^cell (make-hashmap))) ; pending events
-  (define heads (spawn ^cell empty-vclock)) ; immediate causal predecessors
-  (define state (spawn ^cell init))     ; accumulated internal state
+  (define heads (spawn ^cell '()))     ; immediate causal predecessors
+  (define state (spawn ^cell init))    ; accumulated internal state
   (define (clock-ref id)
     (or (hashmap-ref (: vclock) id) (make-clock replica-id)))
   (define (tick!)
@@ -186,16 +186,18 @@
     (: log (hashmap-set (: log) (event-id event) event)))
   (define (update! timestamp exp)
     (: state (effect timestamp exp (: state))))
-  (define (causally-consistent? vclock)
-    (every (lambda (t) (hashmap-ref (: log) t))
-           (vclock->list vclock)))
+  (define (causally-consistent? event-ids)
+    (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
+  (define (lookup-events event-ids)
+    (let ((log (: log)))
+      (map (lambda (event-id) (hashmap-ref log event-id)) event-ids)))
   ;; Exactly-once delivery in causal order.  Events remain in the
   ;; pending set until their direct predecessor events have arrived.
   (define (deliver! pending)
     (hashmap-fold
      (lambda (event-id event pending)
        (match event
-         (($ <event> _ parents _ exp)
+         (($ <event> _ parents timestamp exp)
           (cond
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
@@ -205,9 +207,15 @@
             (update! event-id exp)
             ;; Check if this event is concurrent with the
             ;; predecessors.  If so, we have another branch to merge.
-            (if (vclock<? (: heads) parents)
-                (: heads (clock->vclock event-id))
-                (: heads (vclock-set (: heads) event-id)))
+            ;;
+            ;; TODO: I don't think this is quite right and the code is
+            ;; inefficient.
+            (if (vclock<? (list->vclock
+                           (map event-timestamp (lookup-events (: heads))))
+                          (list->vclock
+                           (map event-timestamp (lookup-events parents))))
+                (: heads (list event-id))
+                (: heads (cons event-id (: heads))))
             (hashmap-remove pending event-id))
            ;; Predecessors aren't all here; do nothing.
            (else pending)))))
@@ -259,20 +267,20 @@
    ((events-since vclock*)
     (let ((vclock* (unmarshall-vclock vclock*)))
       (define (visit-parents parents memo)
-        (hashmap-fold (lambda (id event-id memo)
-                        (visit (hashmap-ref (: log) event-id) memo))
-                      memo parents))
+        (fold (lambda (event-id memo)
+                (visit (hashmap-ref (: log) event-id) memo))
+              memo parents))
       (define (visit event memo)
         (match event
-          (($ <event> event-id parents exp)
+          (($ <event> event-id parents timestamp exp)
            (match (hashmap-ref memo event-id)
              ;; Event isn't already in result set; continue.
              (#f
-              (let ((clock (hashmap-ref vclock* (clock-id event-id))))
+              (let ((clock (hashmap-ref vclock* (clock-id timestamp))))
                 ;; Continue as long as the event did not happen before the
                 ;; last recorded event seen by the caller.
                 (if (or (not clock)
-                        (negative? (clock-compare-partial clock event-id)))
+                        (negative? (clock-compare-partial clock timestamp)))
                     (visit-parents parents (hashmap-set memo event-id event))
                     memo)))
              ;; Event is already in result set; terminate.
@@ -289,7 +297,7 @@
       (append! event)
       (update! event-id (event-data event))
       ;; The log branches are now merged into one.
-      (: heads (clock->vclock event-id))
+      (: heads (list event-id))
       ;; Notify replicas that we have fresh data.
       (hashmap-for-each
        (lambda (_ r) (<-np r 'refresh replica-id))
