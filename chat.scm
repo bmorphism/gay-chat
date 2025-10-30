@@ -118,7 +118,9 @@
 ;;;
 
 (define-actor (^identity become spn #:optional (private-key (generate-key-pair)))
-  (define public-key (key-pair->public-key private-key))
+  (define public-key
+    (captp-public-key->bytevector
+     (key-pair->public-key private-key)))
   (methods
    ((spn) spn)
    ((private-key) private-key)

@@ -303,23 +303,20 @@
                             (prepare prepare/default)
                             (effect effect/default)
                             (query identity))
-  (define public-key (key-pair->public-key private-key))
+  (define public-key
+    (captp-public-key->bytevector
+     (key-pair->public-key private-key)))
   (define (prepare* timestamp parents exp)
-    ;; Add timestamp to the message to prevent replay attacks.
-    (let* ((data (encode (list timestamp exp)))
+    (let* ((data (encode exp))
            (sig (sign data private-key)))
       (make-event timestamp parents timestamp (list public-key sig data))))
   (define (effect* timestamp exp prev)
     (match exp
       ((public-key sig data)
-       (let ((public-key* (captp-public-key->crypto-public-key public-key))
+       (let ((public-key* (bytevector->crypto-public-key public-key))
              (sig (captp-signature->crypto-signature sig)))
          (if (verify sig data public-key*)
-             (match (decode data)
-               ((timestamp* exp)
-                (if (equal? timestamp timestamp*)
-                    (effect timestamp public-key exp prev)
-                    prev)))
+             (effect timestamp public-key (decode data) prev)
              ;; TODO: Probably should do something other than silently
              ;; ignoring the message so Mallet can be held accountable
              ;; for their attempt at deception.
