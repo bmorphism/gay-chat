@@ -274,7 +274,7 @@
               memo parents))
       (define (visit event memo)
         (match event
-          (($ <event> event-id parents timestamp exp)
+          (($ <event> event-id parents timestamp)
            (match (hashmap-ref memo event-id)
              ;; Event isn't already in result set; continue.
              (#f
