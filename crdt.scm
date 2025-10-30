@@ -32,6 +32,7 @@
   #:use-module (goblins utils hashmap)
   #:use-module (hlc)
   #:use-module (ice-9 match)
+  #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
   #:export (make-event
@@ -143,7 +144,7 @@
   (make-event timestamp parents timestamp data))
 
 ;; Default to doing absolutely nothing at all.
-(define (effect/default timestamp data prev) prev)
+(define (effect/default id parents timestamp data prev) prev)
 
 ;; TODO: Use a hybrid op/state-based approach where replicas coming
 ;; online can sync the entire state at once and then receive
@@ -151,8 +152,6 @@
 ;;
 ;; TODO: Deliver incremental updates to the user so they don't have to
 ;; call 'ref' and diff the result with the previous version.
-;;
-;; TODO: Byzantine fault tolerance.
 ;;
 ;; Replica IDs must be unique amongst processes editing the CRDT.
 ;; Replica IDs are ephemeral and should be generated fresh for each
@@ -187,7 +186,7 @@
   (define (update! event)
     (match event
       (($ <event> id parents timestamp data)
-       (: state (effect timestamp data (: state))))))
+       (: state (effect id parents timestamp data (: state))))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
   (define (lookup-events event-ids)
@@ -307,7 +306,9 @@
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))))
 
-;; Wrapper CRDT that signs and verifies all operations.
+;; Wrapper CRDT that hashes, signs, and verifies all operations to
+;; prevent replay attacks and Byzantine faults.  Event IDs are SHA-256
+;; hashes of the parent events, the timestamp, and the message data.
 (define-actor (^crypto-crdt become replica-id private-key #:key
                             init
                             (prepare prepare/default)
@@ -316,22 +317,33 @@
   (define public-key
     (captp-public-key->bytevector
      (key-pair->public-key private-key)))
-  (define (prepare* timestamp parents exp)
-    (let* ((data (encode exp))
-           (sig (sign data private-key)))
-      (make-event timestamp parents timestamp (list public-key sig data))))
-  (define (effect* timestamp exp prev)
-    (match exp
-      ((public-key sig data)
-       (let ((public-key* (bytevector->crypto-public-key public-key))
-             (sig (captp-signature->crypto-signature sig)))
-         (if (verify sig data public-key*)
-             (effect timestamp public-key (decode data) prev)
-             ;; TODO: Probably should do something other than silently
-             ;; ignoring the message so Mallet can be held accountable
-             ;; for their attempt at deception.
-             prev)))
-      (_ prev)))
+  (define (prepare* timestamp parents data)
+    (let* ((data (encode data))
+           ;; The signature covers the encoded data *and* the parent
+           ;; IDs.  Mallet cannot replay Alice's message in a new
+           ;; event because the signature will not match.
+           (sig (sign (encode (list parents data)) private-key))
+           (payload (encode (list public-key sig data)))
+           ;; Event IDs are content-addressed.  The event ID is a
+           ;; SHA-256 hash of the timestamp, parents, and payload.
+           ;; Byzantine Mallet cannot send Alice and Bob different
+           ;; messages with the same ID.  One or both will not hash
+           ;; properly and the invalid messages will be rejected.
+           (id (sha256 (encode (list timestamp parents payload)))))
+      (make-event id parents timestamp payload)))
+  ;; TODO: We need a validation pass because this doesn't actually
+  ;; prevent the above mentioned attacks since the effect function is
+  ;; called *after* the event has been accepted into the CRDT.
+  (define (effect* id parents timestamp payload prev)
+    (if (bytevector=? id (sha256 (encode (list timestamp parents payload))))
+        (match (decode payload)
+          ((public-key sig data)
+           (if (verify (captp-signature->crypto-signature sig)
+                       (encode (list parents data))
+                       (bytevector->crypto-public-key public-key))
+               (effect timestamp public-key (decode data) prev)
+               (error "invalid signature" public-key))))
+        (error "hash mismatch")))
   (spawn ^crdt replica-id
          #:init init
          #:prepare prepare*
