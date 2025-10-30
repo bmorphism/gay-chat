@@ -135,7 +135,7 @@
      (lambda (public-key spn memo)
        (hashmap-set memo public-key (lww-register-value spn)))
      (make-hashmap) members))
-  (define (effect timestamp public-key exp members)
+  (define (effect id timestamp public-key exp members)
     (match exp
       (('set-spn name)
        ;; The name might not be valid UTF-8, in which case we should
@@ -151,7 +151,7 @@
                 (hashmap-set members public-key r*))))))
       (_ members)))
   (define crdt
-    (spawn ^crypto-crdt replica-id private-key
+    (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
            #:effect effect))
@@ -189,7 +189,7 @@
                        '() reacts)))))
          (sort (hashmap-fold (lambda (id msg memo) (cons msg memo)) '() messages)
                message<?)))
-  (define (effect timestamp public-key exp messages)
+  (define (effect id timestamp public-key exp messages)
     (match exp
       (('post author created contents)
        (hashmap-set messages timestamp
@@ -217,7 +217,7 @@
                                      timestamp public-key char)))
       (_ messages)))
   (define crdt
-    (spawn ^crypto-crdt replica-id private-key
+    (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
            #:effect effect))

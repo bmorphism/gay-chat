@@ -35,15 +35,7 @@
   #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
-  #:export (make-event
-            event?
-            event-id
-            event-parents
-            event-timestamp
-            event-data
-
-            ^crdt
-            ^crypto-crdt))
+  #:export (^crdt))
 
 (define (hashmap-keys h)
   (hashmap-fold (lambda (k v memo) (cons k memo)) '() h))
@@ -67,12 +59,14 @@
   (hashmap-set vclock (clock-id clock) clock))
 
 (define-record-type <event>
-  (make-event id parents timestamp data)
+  (make-event id parents timestamp public-key signature blob)
   event?
-  (id event-id)               ; any
-  (parents event-parents)     ; list of id
-  (timestamp event-timestamp) ; HLC
-  (data event-data))          ; any
+  (id event-id)                 ; SHA-256 hash
+  (parents event-parents)       ; list of ID
+  (timestamp event-timestamp)   ; HLC
+  (public-key event-public-key) ; ed25519 key
+  (signature event-signature)   ; ed25519 signature
+  (blob event-blob))            ; bytevector
 
 (define (marshall-clock clock)
   (match clock
@@ -98,8 +92,9 @@
 (define marshallers
   (list (cons event?
               (match-lambda
-                (($ <event> id parents timestamp data)
-                 (make-tagged 'event (list id parents timestamp data)))))
+                (($ <event> id parents timestamp public-key signature blob)
+                 (make-tagged 'event (list id parents timestamp public-key
+                                           signature blob)))))
         (cons clock?
               (match-lambda
                 (($ <clock> real logical id)
@@ -139,12 +134,11 @@
                  ((? negative?) (lp ids #t))
                  (_ #f)))))))))))
 
-;; Default to using the timestamp as the unique event ID.
-(define (prepare/default timestamp parents data)
-  (make-event timestamp parents timestamp data))
+;; Default to leaving the event data as-is.
+(define (prepare/default timestamp parents exp) exp)
 
-;; Default to doing absolutely nothing at all.
-(define (effect/default id parents timestamp data prev) prev)
+;; Everything converges when nothing ever happens.
+(define (effect/default id timestamp public-key exp prev) prev)
 
 ;; TODO: Use a hybrid op/state-based approach where replicas coming
 ;; online can sync the entire state at once and then receive
@@ -159,11 +153,14 @@
 ;; user ID.  Any given user could have multiple devices in use, or
 ;; multiple browser tabs open, and each should have a different
 ;; replica ID.
-(define-actor (^crdt become replica-id #:key
+(define-actor (^crdt become replica-id private-key #:key
                      init
                      (prepare prepare/default)
                      (effect effect/default)
                      (query identity))
+  (define public-key
+    (captp-public-key->bytevector
+     (key-pair->public-key private-key)))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
   (define vclock (spawn ^cell empty-vclock))     ; vector clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
@@ -183,10 +180,8 @@
                       (clock-id timestamp) timestamp))))
   (define (append! event)
     (: log (hashmap-set (: log) (event-id event) event)))
-  (define (update! event)
-    (match event
-      (($ <event> id parents timestamp data)
-       (: state (effect id parents timestamp data (: state))))))
+  (define (update! id timestamp public-key exp)
+    (: state (effect id timestamp public-key exp (: state))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
   (define (lookup-events event-ids)
@@ -194,18 +189,27 @@
       (map (lambda (event-id) (hashmap-ref log event-id)) event-ids)))
   ;; Exactly-once delivery in causal order.  Events remain in the
   ;; pending set until their direct predecessor events have arrived.
+  ;;
+  ;; Security note: Mallet could DoS Alice by writing a lot of events
+  ;; with fake parent IDs and grow the pending set without bound.
+  ;; Mallet could also do this with legitimate events and grow the
+  ;; event log without bound.  Once Mallet has access to propagate
+  ;; events to Alice's replica there's really nothing that can be done
+  ;; (simply, anyway) from within the CRDT.  Mallet can instead be
+  ;; held accountable by revoking the object capability that grants
+  ;; access to Alice's replica.
   (define (deliver! pending)
     (hashmap-fold
      (lambda (event-id event pending)
        (match event
-         (($ <event> _ parents timestamp)
+         (($ <event> id parents timestamp public-key _ blob)
           (cond
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
             ;; Advance clock with every message delivered.
             (join! timestamp)
             (append! event)
-            (update! event)
+            (update! id timestamp public-key (decode blob))
             ;; Check if this event is concurrent with the
             ;; predecessors.  If so, we have another branch to merge.
             ;;
@@ -221,6 +225,16 @@
            ;; Predecessors aren't all here; do nothing.
            (else pending)))))
      pending pending))
+  ;; Check event hash and signature.
+  (define (valid? event)
+    (match event
+      (($ <event> event-id parents timestamp public-key signature blob)
+       (and (bytevector=? event-id (sha256 (encode (list timestamp parents blob))))
+            (verify (captp-signature->crypto-signature signature)
+                    (encode (list parents blob))
+                    ;; TODO: Canonicalize keys so we don't construct
+                    ;; the same ones over and over?
+                    (bytevector->crypto-public-key public-key))))))
   (define (sync! replica)
     ;; TODO: Do we need to send the complete vector clock (which grows
     ;; without bound) or can we just send the direct predecessor
@@ -233,7 +247,8 @@
                      (match (decode event)
                        ((and event ($ <event> event-id))
                         (if (and (not (hashmap-ref (: log) event-id))
-                                 (not (hashmap-ref memo event-id)))
+                                 (not (hashmap-ref memo event-id))
+                                 (valid? event))
                             (hashmap-set memo event-id event)
                             memo))))
                    (: pending) events)))
@@ -291,12 +306,28 @@
                     '()
                     (visit-parents (: heads) (make-hashmap)))))
    ;; Commit a local event to the log.
-   ((commit data)
+   ((commit exp)
     ;; Advance our clock and create a new event.
     (let* ((timestamp (tick!))
-           (event (prepare timestamp (: heads) data)))
+           (parents (: heads))
+           (prepared (prepare timestamp parents exp))
+           ;; Store user data as a blob in the log.
+           (blob (encode prepared))
+           ;; Event IDs are content-addressed.  The event ID is a
+           ;; SHA-256 hash of the timestamp, parents, and blob.
+           ;; Byzantine Mallet cannot send Alice and Bob different
+           ;; events with the same ID.  One or both will not hash
+           ;; properly and the invalid events will be rejected.
+           (id (sha256 (encode (list timestamp parents blob))))
+           ;; The signature incorporates the blob and the parent event
+           ;; IDs.  Mallet cannot replay Alice's message in a new
+           ;; event because the parents will have to be different and
+           ;; thus copying Alice's signature from one of her event's
+           ;; will result in a mismatch.
+           (signature (sign (encode (list parents blob)) private-key))
+           (event (make-event id parents timestamp public-key signature blob)))
       (append! event)
-      (update! event)
+      (update! id timestamp public-key exp)
       ;; The log branches are now merged into one.
       (: heads (list (event-id event)))
       ;; Notify replicas that we have fresh data.
@@ -305,47 +336,3 @@
        (: replicas))))
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))))
-
-;; Wrapper CRDT that hashes, signs, and verifies all operations to
-;; prevent replay attacks and Byzantine faults.  Event IDs are SHA-256
-;; hashes of the parent events, the timestamp, and the message data.
-(define-actor (^crypto-crdt become replica-id private-key #:key
-                            init
-                            (prepare prepare/default)
-                            (effect effect/default)
-                            (query identity))
-  (define public-key
-    (captp-public-key->bytevector
-     (key-pair->public-key private-key)))
-  (define (prepare* timestamp parents data)
-    (let* ((data (encode data))
-           ;; The signature covers the encoded data *and* the parent
-           ;; IDs.  Mallet cannot replay Alice's message in a new
-           ;; event because the signature will not match.
-           (sig (sign (encode (list parents data)) private-key))
-           (payload (encode (list public-key sig data)))
-           ;; Event IDs are content-addressed.  The event ID is a
-           ;; SHA-256 hash of the timestamp, parents, and payload.
-           ;; Byzantine Mallet cannot send Alice and Bob different
-           ;; messages with the same ID.  One or both will not hash
-           ;; properly and the invalid messages will be rejected.
-           (id (sha256 (encode (list timestamp parents payload)))))
-      (make-event id parents timestamp payload)))
-  ;; TODO: We need a validation pass because this doesn't actually
-  ;; prevent the above mentioned attacks since the effect function is
-  ;; called *after* the event has been accepted into the CRDT.
-  (define (effect* id parents timestamp payload prev)
-    (if (bytevector=? id (sha256 (encode (list timestamp parents payload))))
-        (match (decode payload)
-          ((public-key sig data)
-           (if (verify (captp-signature->crypto-signature sig)
-                       (encode (list parents data))
-                       (bytevector->crypto-public-key public-key))
-               (effect timestamp public-key (decode data) prev)
-               (error "invalid signature" public-key))))
-        (error "hash mismatch")))
-  (spawn ^crdt replica-id
-         #:init init
-         #:prepare prepare*
-         #:effect effect*
-         #:query query))
