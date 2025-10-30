@@ -204,7 +204,7 @@
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
             ;; Advance clock with every message delivered.
-            (join! event-id)
+            (join! timestamp)
             (append! event)
             (update! event)
             ;; Check if this event is concurrent with the
@@ -294,12 +294,12 @@
    ;; Commit a local event to the log.
    ((commit data)
     ;; Advance our clock and create a new event.
-    (let* ((event-id (tick!))
-           (event (prepare event-id (: heads) data)))
+    (let* ((timestamp (tick!))
+           (event (prepare timestamp (: heads) data)))
       (append! event)
       (update! event)
       ;; The log branches are now merged into one.
-      (: heads (list event-id))
+      (: heads (list (event-id event)))
       ;; Notify replicas that we have fresh data.
       (hashmap-for-each
        (lambda (_ r) (<-np r 'refresh replica-id))
