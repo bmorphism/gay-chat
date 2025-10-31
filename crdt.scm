@@ -108,12 +108,6 @@
   (define pending (spawn ^cell (make-hashmap))) ; event queue
   (define heads (spawn ^cell '())) ; immediate causal predecessors
   (define state (spawn ^cell init)) ; accumulated internal state
-  (define (tick!)
-    (let ((new (clock-tick (: clock))))
-      (: clock new)
-      new))
-  (define (join! timestamp)
-    (: clock (clock-join (: clock) timestamp)))
   (define (append! event)
     (: log (hashmap-set (: log) (event-id event) event)))
   (define (update! id timestamp public-key exp)
@@ -140,7 +134,7 @@
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
             ;; Advance clock with every message delivered.
-            (join! timestamp)
+            (: clock (clock-join (: clock) timestamp))
             (append! event)
             (update! event-id timestamp public-key (decode blob))
             ;; Update heads (events with no successors).
@@ -239,7 +233,7 @@
    ;; Commit a new operation to the event log.
    ((commit exp)
     ;; Advance our clock and create a new event.
-    (let* ((timestamp (tick!))
+    (let* ((timestamp (clock-tick (: clock)))
            (parents (: heads))
            (prepared (prepare timestamp parents exp))
            ;; Store user data as a blob in the log.
@@ -258,6 +252,7 @@
            ;; previous signatures.
            (signature (sign (encode (list parents blob)) private-key))
            (event (make-event id parents timestamp public-key signature blob)))
+      (: clock timestamp)
       (append! event)
       (update! id timestamp public-key exp)
       ;; The log branches are now merged into one.
