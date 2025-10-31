@@ -75,26 +75,6 @@
 (define (decode bv)
   (syrup-decode bv #:unmarshallers unmarshallers))
 
-;; a < b when all node clocks in a are <= the associated clocks in b
-;; and at least one clock in a is < than the associated clock in b.
-(define (vclock<? a b)
-  (let ((ids (delete-duplicates (append (hashmap-keys a) (hashmap-keys b)))))
-    (let lp ((ids ids)
-             (less? #f))
-      (match ids
-        (() less?)
-        ((id . ids)
-         (match (hashmap-ref a id)
-           (#f (lp ids #t))
-           (clock-a
-            (match (hashmap-ref b id)
-              (#f #f)
-              (clock-b
-               (match (clock-compare-partial clock-a clock-b)
-                 (0 (lp ids less?))
-                 ((? negative?) (lp ids #t))
-                 (_ #f)))))))))))
-
 ;; Default to leaving the event data as-is.
 (define (prepare/default timestamp parents exp) exp)
 
