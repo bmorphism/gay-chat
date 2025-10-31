@@ -120,9 +120,6 @@
     (: state (effect id timestamp public-key exp (: state))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
-  (define (lookup-events event-ids)
-    (let ((log (: log)))
-      (map (lambda (event-id) (hashmap-ref log event-id)) event-ids)))
   ;; Exactly-once delivery in causal order.  Events remain in the
   ;; pending set until their direct predecessor events have arrived.
   ;;
