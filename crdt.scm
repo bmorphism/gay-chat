@@ -15,8 +15,8 @@
 
 ;;; Commentary:
 ;;;
-;;; A simple operation-based CRDT with an append-only event log.
-;;; Operations are processed in causal order.
+;;; A simple, but Byzantine fault tolerant, operation-based CRDT with
+;;; causal delivery order.
 ;;;
 ;;; Code:
 
