@@ -253,9 +253,10 @@
            (id (sha256 (encode (list timestamp parents blob))))
            ;; The signature incorporates the blob and the parent event
            ;; IDs.  Mallet cannot replay Alice's message in a new
-           ;; event because the parents will have to be different and
-           ;; thus copying Alice's signature from one of her event's
-           ;; will result in a mismatch.
+           ;; event.  The parent events will have to be different due
+           ;; to content addressing.  Since the parents are part of
+           ;; the signature, Mallet cannot reuse one of Alice's
+           ;; previous signatures.
            (signature (sign (encode (list parents blob)) private-key))
            (event (make-event id parents timestamp public-key signature blob)))
       (append! event)
