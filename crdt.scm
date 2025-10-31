@@ -184,6 +184,7 @@
     (: state (effect id timestamp public-key exp (: state))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
+  (define (lookup-event event-id) (hashmap-ref (: log) event-id))
   (define (lookup-events event-ids)
     (let ((log (: log)))
       (map (lambda (event-id) (hashmap-ref log event-id)) event-ids)))
@@ -202,14 +203,14 @@
     (hashmap-fold
      (lambda (event-id event pending)
        (match event
-         (($ <event> id parents timestamp public-key _ blob)
+         (($ <event> event-id parents timestamp public-key _ blob)
           (cond
            ;; Predecessors are all here; apply the event!
            ((causally-consistent? parents)
             ;; Advance clock with every message delivered.
             (join! timestamp)
             (append! event)
-            (update! id timestamp public-key (decode blob))
+            (update! event-id timestamp public-key (decode blob))
             ;; Check if this event is concurrent with the
             ;; predecessors.  If so, we have another branch to merge.
             ;;
@@ -235,76 +236,78 @@
                     ;; TODO: Canonicalize keys so we don't construct
                     ;; the same ones over and over?
                     (bytevector->crypto-public-key public-key))))))
-  (define (sync! replica)
-    ;; TODO: Do we need to send the complete vector clock (which grows
-    ;; without bound) or can we just send the direct predecessor
-    ;; clocks?
-    (let-on ((events (<- replica 'events-since (marshall-vclock (: vclock)))))
-      (let ((pending*
-             ;; Append the new events, filtering out events we
-             ;; already know about.
-             (fold (lambda (event memo)
-                     (match (decode event)
-                       ((and event ($ <event> event-id))
-                        (if (and (not (hashmap-ref (: log) event-id))
-                                 (not (hashmap-ref memo event-id))
-                                 (valid? event))
-                            (hashmap-set memo event-id event)
-                            memo))))
-                   (: pending) events)))
-        (unless (eq? (: pending) pending*)
-          ;; Process pending events until we reach a fixed point.
-          (let lp ((memo pending*))
-            (let ((new (deliver! memo)))
-              (if (eq? memo new)
-                  (: pending new)
-                  (lp new))))
-          ;; Notify other replicas.
-          (hashmap-for-each
-           (lambda (_ r)
-             (unless (eq? r replica)
-               (<-np r 'refresh replica-id)))
-           (: replicas))))))
+  (define (sync! replica event-ids)
+    (on-match (<- replica 'missing event-ids)
+      ;; Remote replica has what we have; nothing to do!
+      (() #t)
+      ;; We have some things the remote replica doesn't.  Push the
+      ;; specified missing commits and then recursively sync the
+      ;; predecessors.
+      (missing
+       (let ((events (lookup-events missing)))
+         (let-on ((_ (<- replica 'push (map encode events))))
+           (match (delete-duplicates
+                   (append-map event-parents events))
+             ;; We've reached the root of the DAG.
+             (() #t)
+             (event-ids
+              (sync! replica event-ids))))))))
+  (define (sync-all!)
+    (hashmap-for-each (lambda (_ r) (sync! r (: heads))) (: replicas)))
   (methods
    ((replica-id) replica-id)
+   ;; Return the user-visible representation of the current state.
+   ((ref) (query (: state)))
    ;; Add a new replica.
    ;;
    ;; TODO: Remove replica on severance.
    ((add-replica replica)
     (let-on ((id* (<- replica 'replica-id)))
       (: replicas (hashmap-set (: replicas) id* replica))
-      (sync! replica)))
-   ;; Request to refresh using a specific replica.
-   ((refresh replica-id)
-    (and=> (hashmap-ref (: replicas) replica-id) sync!))
-   ;; Collect and return a subset of events with timestamps newer than
-   ;; the given vector clock.  Used by replicas to find new events and
-   ;; reach eventual consistency.
-   ((events-since vclock*)
-    (let ((vclock* (unmarshall-vclock vclock*)))
-      (define (visit-parents parents memo)
-        (fold (lambda (event-id memo)
-                (visit (hashmap-ref (: log) event-id) memo))
-              memo parents))
-      (define (visit event memo)
-        (match event
-          (($ <event> event-id parents timestamp)
-           (match (hashmap-ref memo event-id)
-             ;; Event isn't already in result set; continue.
-             (#f
-              (let ((clock (hashmap-ref vclock* (clock-id timestamp))))
-                ;; Continue as long as the event did not happen before the
-                ;; last recorded event seen by the caller.
-                (if (or (not clock)
-                        (negative? (clock-compare-partial clock timestamp)))
-                    (visit-parents parents (hashmap-set memo event-id event))
-                    memo)))
-             ;; Event is already in result set; terminate.
-             (_ memo)))))
-      (hashmap-fold (lambda (id event result)
-                      (cons (encode event) result))
-                    '()
-                    (visit-parents (: heads) (make-hashmap)))))
+      (sync! replica (: heads))))
+   ;; Query the replica to see if any of the given events *or* their
+   ;; predecessors are missing.
+   ((missing event-ids)
+    (hashmap-keys
+     (let lp ((event-ids event-ids) (missing (make-hashmap)))
+       (fold (lambda (event-id missing)
+               (cond
+                ((hashmap-ref (: log) event-id)
+                 missing)
+                ((hashmap-ref (: pending) event-id) =>
+                 (match-lambda
+                   (($ <event> _ parents)
+                    (lp parents missing))))
+                (else
+                 (hashmap-set missing event-id #t))))
+             missing event-ids))))
+   ((push blobs)
+    (let ((pending*
+           ;; Add the new events to the pending set, filtering out
+           ;; events we already have or that are garbage.
+           (fold (lambda (event memo)
+                   (match event
+                     ((and event ($ <event> event-id))
+                      (if (and (not (hashmap-ref (: log) event-id))
+                               (not (hashmap-ref memo event-id))
+                               (valid? event))
+                          (hashmap-set memo event-id event)
+                          memo))))
+                 (: pending)
+                 (map decode blobs))))
+      (unless (eq? (: pending) pending*)
+        ;; Deliver pending events until we reach a fixed point.
+        ;;
+        ;; TODO: Use a topological sort.
+        (let lp ((events pending*))
+          (let ((new (deliver! events)))
+            (cond
+             ((eq? events new)
+              ;; Sync replicas when new events have been delivered.
+              (unless (eq? events pending*)
+                (sync-all!))
+              (: pending events))
+             (else (lp new))))))))
    ;; Commit a local event to the log.
    ((commit exp)
     ;; Advance our clock and create a new event.
@@ -330,9 +333,4 @@
       (update! id timestamp public-key exp)
       ;; The log branches are now merged into one.
       (: heads (list (event-id event)))
-      ;; Notify replicas that we have fresh data.
-      (hashmap-for-each
-       (lambda (_ r) (<-np r 'refresh replica-id))
-       (: replicas))))
-   ;; Return the user-visible representation of the current state.
-   ((ref) (query (: state)))))
+      (sync-all!)))))
