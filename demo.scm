@@ -34,6 +34,11 @@
 (define chat-bob (with-vat vat-bob (spawn ^chat-room id-bob)))
 (define chat-carol (with-vat vat-carol (spawn ^chat-room id-carol)))
 
+(define chat-alice->bob (with-vat vat-alice (: chat-alice 'fresh-replica)))
+(define chat-alice->carol (with-vat vat-alice (: chat-alice 'fresh-replica)))
+(define chat-bob->alice (with-vat vat-bob (: chat-bob 'fresh-replica)))
+(define chat-carol->alice (with-vat vat-carol (: chat-carol 'fresh-replica)))
+
 (define netlayer-alice (with-vat vat-alice (spawn ^tcp-tls-netlayer "localhost")))
 (define netlayer-bob (with-vat vat-bob (spawn ^tcp-tls-netlayer "localhost")))
 (define netlayer-carol (with-vat vat-carol (spawn ^tcp-tls-netlayer "localhost")))
@@ -42,9 +47,10 @@
 (define mycapn-bob (with-vat vat-bob (spawn-mycapn netlayer-bob)))
 (define mycapn-carol (with-vat vat-carol (spawn-mycapn netlayer-carol)))
 
-(define sturdyref-alice (with-vat vat-alice (: mycapn-alice 'register chat-alice 'tcp-tls)))
-(define sturdyref-bob (with-vat vat-bob (: mycapn-bob 'register chat-bob 'tcp-tls)))
-(define sturdyref-carol (with-vat vat-carol (: mycapn-carol 'register chat-carol 'tcp-tls)))
+(define sturdyref-alice->bob (with-vat vat-alice (: mycapn-alice 'register chat-alice->bob 'tcp-tls)))
+(define sturdyref-alice->carol (with-vat vat-alice (: mycapn-alice 'register chat-alice->carol 'tcp-tls)))
+(define sturdyref-bob->alice (with-vat vat-bob (: mycapn-bob 'register chat-bob->alice 'tcp-tls)))
+(define sturdyref-carol->alice (with-vat vat-carol (: mycapn-carol 'register chat-carol->alice 'tcp-tls)))
 
 (define (render-chat title names messages)
   (format #t "# Chat log for ~a\n" title)
@@ -88,14 +94,14 @@
 ;; a direct connection to each other.  Nonetheless, all messages will
 ;; propagate to all three eventually.
 (with-vat vat-alice
-  (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-bob))
-  (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-carol)))
+  (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-bob->alice))
+  (: chat-alice 'add-replica (: mycapn-alice 'enliven sturdyref-carol->alice)))
 ;; Sleep a bit to avoid crossed hello exceptions in the output.
 (sleep .5)
 (with-vat vat-bob
-  (: chat-bob 'add-replica (: mycapn-bob 'enliven sturdyref-alice)))
+  (: chat-bob 'add-replica (: mycapn-bob 'enliven sturdyref-alice->bob)))
 (with-vat vat-carol
- (: chat-carol 'add-replica (: mycapn-carol 'enliven sturdyref-alice)))
+ (: chat-carol 'add-replica (: mycapn-carol 'enliven sturdyref-alice->carol)))
 
 ;; Post some messages to populate the chat log.
 (with-vat vat-alice (<-np chat-alice 'post "Hello"))

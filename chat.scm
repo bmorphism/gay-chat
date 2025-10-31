@@ -234,6 +234,21 @@
    ((unreact msgid char)
     (: crdt 'commit `(unreact ,msgid ,char)))))
 
+(define (spawn-revokable-and-revoker obj)
+  (define token (list 'revoke))
+  (define (revoked . args) (error "revoked"))
+  (define (^revokable become)
+    (case-lambda
+      ((x)
+       (if (eq? x token)
+           (become revoked)
+           (: obj x)))
+      (args (apply : obj args))))
+  (define (^revoker become)
+    (lambda () (: proxy token)))
+  (define proxy (spawn ^revokable))
+  (values proxy (spawn ^revoker)))
+
 (define-actor (^chat-room become id #:optional (period (* 30 60)))
   (define (^partition-replica become replica key)
     (methods
@@ -245,11 +260,24 @@
      ((replica-id) (<- replica 'replica-id))
      ((missing event-ids) (<- replica 'missing/group event-ids))
      ((push events) (<- replica 'push/group events))))
+  (define (^chat-room-replica become)
+    (methods
+     ((replica-id) replica-id)
+     ((missing/messages heads key)
+      (: (partition-ref key) 'missing heads))
+     ((push/messages events key)
+      (: (partition-ref key) 'push events))
+     ((missing/group heads)
+      (: group 'missing heads))
+     ((push/group events)
+      (: group 'push events))))
   (define spn (: id 'spn))
   (define private-key (: id 'private-key))
   (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
   (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  ;; Our replica interface.
+  (define replica (spawn ^chat-room-replica))
   ;; The group stores user profile information.
   (define group (spawn ^group replica-id private-key))
   ;; Tell the group our self-proposed name.
@@ -276,6 +304,10 @@
     (partition-ref (floor (/ time period))))
   (methods
    ((replica-id) replica-id)
+   ;; Spawn a revokable proxy to our replica that we can share with
+   ;; someone else.
+   ((fresh-replica)
+    (spawn-revokable-and-revoker replica))
    ((add-replica replica)
     (: replicas (cons replica (: replicas)))
     (: group 'add-replica (spawn ^group-replica replica))
@@ -284,14 +316,6 @@
        (let ((replica* (spawn ^partition-replica replica key)))
          (: log 'add-replica replica*)))
      (: partitions)))
-   ((missing/messages heads key)
-    (: (partition-ref key) 'missing heads))
-   ((push/messages events key)
-    (: (partition-ref key) 'push events))
-   ((missing/group heads)
-    (: group 'missing heads))
-   ((push/group events)
-    (: group 'push events))
    ((ref time)
     (: (partition-for-time time) 'ref))
    ;; Mainly for testing.
