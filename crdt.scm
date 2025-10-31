@@ -40,24 +40,6 @@
 (define (hashmap-keys h)
   (hashmap-fold (lambda (k v memo) (cons k memo)) '() h))
 
-(define empty-vclock (make-hashmap))
-
-(define (list->vclock clocks)
-  (fold (lambda (clock vclock)
-          (hashmap-set vclock (clock-id clock) clock))
-        (make-hashmap) clocks))
-
-(define (vclock->list vclock)
-  (hashmap-fold (lambda (id clock memo)
-                  (cons clock memo))
-                '() vclock))
-
-(define (clock->vclock clock)
-  (hashmap ((clock-id clock) clock)))
-
-(define (vclock-set vclock clock)
-  (hashmap-set vclock (clock-id clock) clock))
-
 (define-record-type <event>
   (make-event id parents timestamp public-key signature blob)
   event?
@@ -67,27 +49,6 @@
   (public-key event-public-key) ; ed25519 key
   (signature event-signature)   ; ed25519 signature
   (blob event-blob))            ; bytevector
-
-(define (marshall-clock clock)
-  (match clock
-    (($ <clock> real logical id)
-     (list real logical id))))
-
-(define (marshall-vclock vclock)
-  (hashmap-fold (lambda (id clock memo)
-                  (cons (marshall-clock clock) memo))
-                '() vclock))
-
-(define (unmarshall-clock clock)
-  (match clock
-    ((real logical id)
-     (%make-clock real logical id))))
-
-(define (unmarshall-vclock vclock)
-  (fold (lambda (clock memo)
-          (let ((clock (unmarshall-clock clock)))
-            (hashmap-set memo (clock-id clock) clock)))
-        (make-hashmap) vclock))
 
 (define marshallers
   (list (cons event?
@@ -162,29 +123,23 @@
     (captp-public-key->bytevector
      (key-pair->public-key private-key)))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
-  (define vclock (spawn ^cell empty-vclock))     ; vector clock
+  (define clock (spawn ^cell (make-clock replica-id))) ; logical clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
   (define pending (spawn ^cell (make-hashmap))) ; pending events
   (define heads (spawn ^cell '()))     ; immediate causal predecessors
   (define state (spawn ^cell init))    ; accumulated internal state
-  (define (clock-ref id)
-    (or (hashmap-ref (: vclock) id) (make-clock replica-id)))
   (define (tick!)
-    (let ((new (clock-tick (clock-ref replica-id))))
-      (: vclock (hashmap-set (: vclock) replica-id new))
+    (let ((new (clock-tick (: clock))))
+      (: clock new)
       new))
   (define (join! timestamp)
-    (let ((ours (clock-ref replica-id)))
-      (: vclock
-         (hashmap-set (hashmap-set (: vclock) replica-id (clock-join ours timestamp))
-                      (clock-id timestamp) timestamp))))
+    (: clock (clock-join (: clock) timestamp)))
   (define (append! event)
     (: log (hashmap-set (: log) (event-id event) event)))
   (define (update! id timestamp public-key exp)
     (: state (effect id timestamp public-key exp (: state))))
   (define (causally-consistent? event-ids)
     (every (lambda (id) (hashmap-ref (: log) id)) event-ids))
-  (define (lookup-event event-id) (hashmap-ref (: log) event-id))
   (define (lookup-events event-ids)
     (let ((log (: log)))
       (map (lambda (event-id) (hashmap-ref log event-id)) event-ids)))
@@ -211,19 +166,14 @@
             (join! timestamp)
             (append! event)
             (update! event-id timestamp public-key (decode blob))
-            ;; Check if this event is concurrent with the
-            ;; predecessors.  If so, we have another branch to merge.
-            ;;
-            ;; TODO: I don't think this is quite right and the code is
-            ;; inefficient.
-            (if (vclock<? (list->vclock
-                           (map event-timestamp (lookup-events (: heads))))
-                          (list->vclock
-                           (map event-timestamp (lookup-events parents))))
-                (: heads (list event-id))
-                (: heads (cons event-id (: heads))))
+            ;; Update heads (events with no successors).
+            (: heads
+               (cons event-id
+                     (remove (lambda (event-id)
+                               (member event-id parents))
+                             (: heads))))
             (hashmap-remove pending event-id))
-           ;; Predecessors aren't all here; do nothing.
+           ;; Missing one or more predecessors; do nothing.
            (else pending)))))
      pending pending))
   ;; Check event hash and signature.
@@ -244,7 +194,9 @@
       ;; specified missing commits and then recursively sync the
       ;; predecessors.
       (missing
-       (let ((events (lookup-events missing)))
+       (let ((events (map (lambda (event-id)
+                            (hashmap-ref (: log) event-id))
+                          missing)))
          (let-on ((_ (<- replica 'push (map encode events))))
            (match (delete-duplicates
                    (append-map event-parents events))
