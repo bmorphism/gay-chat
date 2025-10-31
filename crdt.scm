@@ -103,11 +103,11 @@
     (captp-public-key->bytevector
      (key-pair->public-key private-key)))
   (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
-  (define clock (spawn ^cell (make-clock replica-id))) ; logical clock
+  (define clock (spawn ^cell (make-clock replica-id))) ; hybrid logical clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
-  (define pending (spawn ^cell (make-hashmap))) ; pending events
-  (define heads (spawn ^cell '()))     ; immediate causal predecessors
-  (define state (spawn ^cell init))    ; accumulated internal state
+  (define pending (spawn ^cell (make-hashmap))) ; event queue
+  (define heads (spawn ^cell '())) ; immediate causal predecessors
+  (define state (spawn ^cell init)) ; accumulated internal state
   (define (tick!)
     (let ((new (clock-tick (: clock))))
       (: clock new)
@@ -184,17 +184,16 @@
   (define (sync-all!)
     (hashmap-for-each (lambda (_ r) (sync! r (: heads))) (: replicas)))
   (methods
-   ((replica-id) replica-id)
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))
-   ;; Add a new replica.
+   ;; Add a remote replica.
    ;;
    ;; TODO: Remove replica on severance.
-   ((add-replica replica)
-    (let-on ((id* (<- replica 'replica-id)))
-      (: replicas (hashmap-set (: replicas) id* replica))
-      (sync! replica (: heads))))
-   ;; Query the replica to see if any of the given events *or* their
+   ((add-replica new)
+    (let-on ((id* (<- new 'replica-id)))
+      (: replicas (hashmap-set (: replicas) id* new))
+      (sync! new (: heads))))
+   ;; Query to see if any of the given events *or* their
    ;; predecessors are missing.
    ((missing event-ids)
     (hashmap-keys
@@ -237,7 +236,7 @@
                 (sync-all!))
               (: pending events))
              (else (lp new))))))))
-   ;; Commit a local event to the log.
+   ;; Commit a new operation to the event log.
    ((commit exp)
     ;; Advance our clock and create a new event.
     (let* ((timestamp (tick!))

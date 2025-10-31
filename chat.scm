@@ -128,7 +128,9 @@
    ((sign data) (sign data private-key))))
 
 ;; A group is a CRDT for associating cryptographic identity with
-;; self-proposed names.
+;; user profile information such as self-proposed names.
+;;
+;; TODO: Petnames
 (define-actor (^group become replica-id private-key)
   (define (query members)
     (hashmap-fold
@@ -156,18 +158,11 @@
            #:query query
            #:effect effect))
   (methods
-   ((add-replica replica)
-    (: crdt 'add-replica replica))
-   ((refresh replica-id)
-    (: crdt 'refresh replica-id))
-   ((missing heads)
-    (: crdt 'missing heads))
-   ((push events)
-    (: crdt 'push events))
-   ((ref)
-    (: crdt 'ref))
-   ((set-spn name)
-    (: crdt 'commit `(set-spn ,name)))))
+   ((add-replica replica) (: crdt 'add-replica replica))
+   ((ref) (: crdt 'ref))
+   ((missing event-ids) (: crdt 'missing event-ids))
+   ((push events) (: crdt 'push events))
+   ((set-spn name) (: crdt 'commit `(set-spn ,name)))))
 
 (define-actor (^chat-log become replica-id private-key)
   (define (query messages)
@@ -224,14 +219,10 @@
            #:query query
            #:effect effect))
   (methods
-   ((add-replica replica)
-    (: crdt 'add-replica replica))
-   ((missing heads)
-    (: crdt 'missing heads))
-   ((push events)
-    (: crdt 'push events))
-   ((ref)
-    (: crdt 'ref))
+   ((add-replica replica) (: crdt 'add-replica replica))
+   ((ref) (: crdt 'ref))
+   ((missing event-ids) (: crdt 'missing event-ids))
+   ((push events) (: crdt 'push events))
    ((post author when contents)
     (: crdt 'commit `(post ,author ,when ,contents)))
    ((edit msgid when contents)
@@ -244,23 +235,25 @@
     (: crdt 'commit `(unreact ,msgid ,char)))))
 
 (define-actor (^chat-room become id #:optional (period (* 30 60)))
+  (define (^partition-replica become replica key)
+    (methods
+     ((replica-id) (<- replica 'replica-id))
+     ((missing event-ids) (<- replica 'missing/messages event-ids key))
+     ((push events) (<- replica 'push/messages events key))))
+  (define (^group-replica become replica)
+    (methods
+     ((replica-id) (<- replica 'replica-id))
+     ((missing event-ids) (<- replica 'missing/group event-ids))
+     ((push events) (<- replica 'push/group events))))
   (define spn (: id 'spn))
   (define private-key (: id 'private-key))
   (define public-key (: id 'public-key))
   ;; Generate a random replica ID.
   (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
+  ;; The group stores user profile information.
   (define group (spawn ^group replica-id private-key))
+  ;; Tell the group our self-proposed name.
   (: group 'set-spn spn)
-  (define (^partition-replica become replica key)
-    (methods
-     ((replica-id) (<- replica 'replica-id))
-     ((missing heads) (<- replica 'missing heads key))
-     ((push events) (<- replica 'push events key))))
-  (define (^group-replica become replica)
-    (methods
-     ((replica-id) (<- replica 'replica-id))
-     ((missing heads) (<- replica 'group-missing heads))
-     ((push events) (<- replica 'group-push events))))
   (define replicas (spawn ^cell '()))
   ;; The chat log is partitioned by time to keep the size of each
   ;; individual CRDT small and allow for dropping entire chunks of
@@ -291,13 +284,13 @@
        (let ((replica* (spawn ^partition-replica replica key)))
          (: log 'add-replica replica*)))
      (: partitions)))
-   ((missing heads key)
+   ((missing/messages heads key)
     (: (partition-ref key) 'missing heads))
-   ((push events key)
+   ((push/messages events key)
     (: (partition-ref key) 'push events))
-   ((group-missing heads)
+   ((missing/group heads)
     (: group 'missing heads))
-   ((group-push events)
+   ((push/group events)
     (: group 'push events))
    ((ref time)
     (: (partition-for-time time) 'ref))
