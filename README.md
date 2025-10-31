@@ -70,23 +70,23 @@ Tolerant"](https://dl.acm.org/doi/10.1145/3517209.3524042).  SHA-256
 was chosen for the hash function and ed25519 for signatures.
 
 **(Note: this paragraph is still TODO)** Certificate capabilities are
-used for a limited form of access control within the chat log CRDTs.
-Administrators of the chat have the privilege of writing to a separate
-CRDT in which the certificates are stored and updated over time.
-Administrators are all *co-equal* since they share write access to the
-same CRDT.  Non-administrators have read-only access to sync the
-certificates.  These certificates *do not* prevent invalid operations
-from being written to the chat event log because there is no central
-hub from which to enforce such a policy.  Instead, they specify the
-rules by which well-behaved clients should *interpret* the events that
-have occurred.  For example, Bob can commit an event that edits the
-contents of Carol's post, but if Bob's certificate does not grant the
-capability to edit posts authored by Carol then that edit will not be
-made user-visible (and the presence of such an event in the log could
+used for a limited, presentation-only form of access control within
+the chat log CRDTs.  The initiator of the chat room has the privilege
+of being the root signer for all certificates used in the chat room.
+These certificates *do not* prevent valid CRDT events for invalid chat
+room operations (according to the certificate policy) from being
+written to the chat event log because there is no central hub from
+which to enforce such a policy.  Instead, they specify the rules by
+which well-behaved clients should *interpret* the events that have
+occurred.  For example, Bob can commit an event that edits the
+contents of Carol's post, but if the certificate Bob used for that
+operation does not grant the capability to edit posts authored by
+Carol then that edit will not be made user-visible (and the presence
+of such an event in the log could be surfaced by the application and
 lead to Bob being removed from the group).  When a node becomes aware
-of changes to the certificate set, it must reinterpret the chat log
-with the updated rules in order to render the most correct view to the
-user according to the available data.
+of a new certificate, it must reinterpret the chat log with the
+current set of policies in order to render the most correct view to
+the user according to the information available on the local replica.
 
 Putting object capabilities and certificate capabilities together, we
 can re-examine the case of Mallet being in the chat room.  To remove
@@ -109,12 +109,23 @@ The overall security goal for this experiment is to prevent Mallet
 from irreparably destroying the shared state of the chat room, to the
 best of our ability, and additionally provide a means of holding
 Mallet accountable for anti-social/malicious actions that the system
-is technically incapable of preventing.  Is this good enough?
+is technically incapable of preventing.  One of the major anti-goals
+of this experiment is to avoid the situation where we have encoded
+significant access control like revocation into the CRDTs and have to
+handle tricky situations such as two admins concurrently revoking each
+other's access.  Instead, we keep it simple: If Alice has an unrevoked
+object capability to write messages to Bob's chat log then she can
+write any message she would like to the chat log.  Everything layered
+on top, like the certificates, is for the sake of the users and admins
+to have some control over the *eventual view* of that chat log in
+well-behaved clients.  Is this good enough?  We're in search of the
+right balance between eventual and strong consistency.
 
 Finally, note that this prototype is focused on exploring the core of
-a minimally viable p2p chat without too many glaring security flaws
-(hopefully).  This is not production software.  We did not concern
-ourselves with optimal bandwidth, memory, nor disk space usage.
+a minimally viable p2p chat built on capability security principles
+without too many glaring security flaws (hopefully).  This is not
+production software.  We did not concern ourselves with optimal
+bandwidth, memory, nor disk space usage.
 
 ## Areas of further research/development
 
@@ -129,6 +140,19 @@ ourselves with optimal bandwidth, memory, nor disk space usage.
   new version where the event history has been rewritten to remove a
   subset of the original events.  This would be like how Git history
   is append-only but branch names are mutable pointers.
+
+* Preventing new members from reading past messages.  This should be
+  an option like it is in other secure chat programs.  A simple,
+  perhaps naive, way to handle this with ocaps is to give the new user
+  a capability that prevents reads/writes/syncs to partitions older
+  than the time the capability was issued.  This introduces some
+  complexity and potential confusion if another member of that chat
+  grants the newcomer a capability to access the complete chat
+  history.  If an ocap approach isn't sufficient then a solution
+  involving additional cryptography would need to be used instead.
+
+* Rotation of user identity keys.  We deliberately left this out to
+  keep the scope of this experiment manageable.
 
 ## Try
 
