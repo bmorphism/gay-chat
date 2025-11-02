@@ -37,9 +37,6 @@
   #:use-module (srfi srfi-9)
   #:export (^crdt))
 
-(define (hashmap-keys h)
-  (hashmap-fold (lambda (k v memo) (cons k memo)) '() h))
-
 (define-record-type <event>
   (make-event id parents timestamp public-key signature blob)
   event?
@@ -190,7 +187,9 @@
    ;; Query to see if any of the given events *or* their
    ;; predecessors are missing.
    ((missing event-ids)
-    (hashmap-keys
+    (hashmap-fold
+     (lambda (event-id event memo) (cons event-id memo))
+     '()
      (let lp ((event-ids event-ids) (missing (make-hashmap)))
        (fold (lambda (event-id missing)
                (cond
