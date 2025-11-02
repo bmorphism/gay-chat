@@ -62,13 +62,14 @@
 ;;;
 
 (define-record-type <certificate>
-  (make-certificate id parent signer controllers predicate)
+  (make-certificate id parent signer controllers predicate revoked?)
   certificate?
-  (id certificate-id)
-  (parent certificate-parent)
-  (signer certificate-signer)
-  (controllers certificate-controllers)
-  (predicate certificate-predicate))
+  (id certificate-id)                   ; SHA-256 hash
+  (parent certificate-parent)           ; SHA-256 hash
+  (signer certificate-signer)           ; ed25519 public key
+  (controllers certificate-controllers) ; list of ed25519 public key
+  (predicate certificate-predicate)     ; procedure
+  (revoked? certificate-revoked?))      ; boolean
 
 (define-record-type <profile>
   (%make-profile public-key self-proposed-name)
@@ -103,7 +104,6 @@
                 (%make-group certificates
                              (hashmap-set profiles public-key profile))))))))))
 
-;; TODO: Verify signature!
 (define (add-group-certificate group root-signer id parent signer
                                controllers exp)
   ;; Simple combinator language for capability attenuation.
@@ -124,7 +124,7 @@
     (($ <group> certificates profiles)
      (define (valid parent)
        (let* ((pred (compile-predicate exp))
-              (cert (make-certificate id parent signer controllers pred)))
+              (cert (make-certificate id parent signer controllers pred #f)))
          (%make-group (hashmap-set certificates id cert) profiles)))
      (if parent
          (match (hashmap-ref certificates parent)
@@ -142,6 +142,27 @@
          (if (equal? signer root-signer)
              (valid #f)
              group)))))
+
+(define (revoke-group-certificate group cert-id who)
+  (match group
+    (($ <group> certificates profiles)
+     (match (hashmap-ref certificates cert-id)
+       ;; No such cert; no-op.
+       (#f group)
+       (($ <certificate> id parent signer controllers predicate revoked?)
+        (cond
+         ;; Already revoked; no-op.
+         (revoked? group)
+         ;; Revoker is the signer; revoke!
+         ((equal? signer who)
+          (let ((revoked-cert (make-certificate id parent signer controllers
+                                                predicate #t)))
+            (%make-group (hashmap-set certificates cert-id revoked-cert)
+                         profiles)))
+         ;; Revoker is not the signer; rejected.
+         ;;
+         ;; TODO: Record this incident for auditing purposes.
+         (else group)))))))
 
 
 ;;;
@@ -235,17 +256,18 @@
       (clock<? (message-timestamp a) (message-timestamp b))
       (< (message-created-at a) (message-created-at b))))
 
-(define (edit<? a b)
-  (clock<? (edit-timestamp a) (edit-timestamp b)))
+(define (edit>? a b)
+  (clock>? (edit-timestamp a) (edit-timestamp b)))
 
-(define (delete<? a b)
-  (clock<? (delete-timestamp a) (delete-timestamp b)))
+(define (delete>? a b)
+  (clock>? (delete-timestamp a) (delete-timestamp b)))
 
 (define (certificate-allows? cert op author who)
   (and (member who (certificate-controllers cert))
        (let check ((cert cert))
          (or (not cert)
-             (and (check (certificate-parent cert))
+             (and (not (certificate-revoked? cert))
+                  (check (certificate-parent cert))
                   ((certificate-predicate cert) op author who))))))
 
 
@@ -277,13 +299,14 @@
                   (($ <profile> _ spn)
                    (hashmap-set memo public-key (lww-register-value spn)))))
               (make-hashmap) profiles)))))
-  (define (effect id timestamp public-key exp group)
+  (define (effect id timestamp who exp group)
     (match exp
       (('set-spn name)
-       (set-group-profile-self-proposed-name group timestamp public-key name))
+       (set-group-profile-self-proposed-name group timestamp who name))
       (('add-certificate parent controllers pred)
-       (add-group-certificate group root-signer id parent public-key
-                              controllers pred))
+       (add-group-certificate group root-signer id parent who controllers pred))
+      (('revoke-certificate cert-id)
+       (revoke-group-certificate group cert-id who))
       (_ group)))
   (define crdt
     (spawn ^crdt replica-id private-key
@@ -297,7 +320,9 @@
    ((push events) (: crdt 'push events))
    ((set-spn name) (: crdt 'commit `(set-spn ,name)))
    ((add-certificate parent controllers pred)
-    (: crdt 'commit `(add-certificate ,parent ,controllers ,pred)))))
+    (: crdt 'commit `(add-certificate ,parent ,controllers ,pred)))
+   ((revoke-certificate cert-id)
+    (: crdt 'commit `(revoke-certificate ,cert-id)))))
 
 ;; A chat log holds one chunk of a chat room's history.
 (define-actor (^chat-log become replica-id private-key)
@@ -306,7 +331,7 @@
            (($ <message> id timestamp author cert created-at contents
                          reacts edits deletes)
             (list id author cert created-at contents
-                  ;; Reacts
+                  ;; Reactions.
                   (hashmap-fold
                    (lambda (char registers memo)
                      (match (hashmap-fold
@@ -318,16 +343,17 @@
                        (() memo)
                        (reacts (cons (cons char reacts) memo))))
                    '() reacts)
-                  ;; Edits
+                  ;; Edits, in descending total order.
                   (map (match-lambda
                          (($ <edit> _ _ editor cert when contents)
                           (list editor cert when contents)))
-                       (sort edits edit<?))
-                  ;; Deletes
+                       (sort edits edit>?))
+                  ;; Deletes, in descending total order.
                   (map (match-lambda
                          (($ <delete> _ _ deleter cert when)
                           (list deleter cert when)))
-                       (sort deletes delete<?)))))
+                       (sort deletes delete>?)))))
+         ;; Return messages in chronological order.
          (sort (hashmap-fold (lambda (id msg memo) (cons msg memo)) '() messages)
                message<?)))
   (define (effect id timestamp who exp messages)
@@ -468,6 +494,8 @@
    ((set-spn name) (: group 'set-spn name))
    ((add-certificate #:key parent (controllers '()) (predicate #t))
     (: group 'add-certificate parent controllers predicate))
+   ((revoke-certificate cert-id)
+    (: group 'revoke-certificate cert-id))
    ((post cert contents #:optional (now (current-time/ms)))
     (: (partition-for-time now) 'post cert now contents))
    ((edit cert msg-id created contents #:optional (now (current-time/ms)))

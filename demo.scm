@@ -55,9 +55,13 @@
 (define cert-bob
   (with-vat vat-alice
     (: chat-alice 'add-certificate
-       #:controllers (list pubkey-bob pubkey-carol)
+       #:controllers (list pubkey-bob)
        #:predicate '(when-op (edit delete) (allow-self)))))
-(define cert-carol cert-bob)
+(define cert-carol
+  (with-vat vat-alice
+    (: chat-alice 'add-certificate
+       #:controllers (list pubkey-carol)
+       #:predicate '(when-op (edit delete) (allow-self)))))
 
 ;; Alice generates revokable proxies to her chat room presence to give
 ;; to Bob and Carol.
@@ -90,44 +94,47 @@
   (with-vat vat-carol (: mycapn-carol 'register chat-carol<-alice 'tcp-tls)))
 
 ;; Some helper procedures to print out the results of this demo.
+;;
+;; TODO: Move all the filtering based on certificate to the ^chat-room
+;; actor.
 (define (render-chat title group messages)
   (match group
     ((certs names)
+     (define (allowed? cert-id op author who)
+       (match (hashmap-ref certs cert-id)
+         (#f #f)
+         (cert
+          (certificate-allows? cert op author who))))
      (format #t "# Chat log for ~a\n" title)
      (newline)
      (for-each (match-lambda
                  ((id author cert-id created-at contents reacts edits deletes)
-                  (let ((name (hashmap-ref names author "?????"))
-                        (edit (find (match-lambda
-                                      ((who cert when contents)
-                                       (match (hashmap-ref certs cert-id)
-                                         (#f #f)
-                                         (cert
-                                          (certificate-allows? cert 'edit author who)))))
-                                    edits))
-                        (delete (find (match-lambda
-                                        ((who cert when)
-                                         (match (hashmap-ref certs cert-id)
-                                           (#f #f)
-                                           (cert
-                                            (certificate-allows? cert 'delete author who)))))
-                                      deletes)))
-                    (cond
-                     (delete
-                      (format #t "<~a>\t--- deleted ---\n" name))
-                     (else
-                      (let ((contents (match edit
-                                        (#f contents)
-                                        ((_ _ _ contents) contents))))
-                        (format #t "<~a>\t~a" name contents)
-                        (unless (null? reacts)
-                          (display "\t[")
-                          (for-each (match-lambda
-                                      ((char . who)
-                                       (format #t " ~ax~a" char (length who))))
-                                    reacts)
-                          (display " ]"))
-                        (newline)))))))
+                  (when (allowed? cert-id 'post author author)
+                    (let ((name (hashmap-ref names author "?????"))
+                          (edit (find (match-lambda
+                                        ((who cert when contents)
+                                         (allowed? cert-id 'edit author who)))
+                                      edits))
+                          (delete (find (match-lambda
+                                          ((who cert when)
+                                           (allowed? cert-id 'delete author who)))
+                                        deletes)))
+                      (cond
+                       (delete
+                        (format #t "<~a>\t--- deleted ---\n" name))
+                       (else
+                        (let ((contents (match edit
+                                          (#f contents)
+                                          ((_ _ _ contents) contents))))
+                          (format #t "<~a>\t~a" name contents)
+                          (unless (null? reacts)
+                            (display "\t[")
+                            (for-each (match-lambda
+                                        ((char . who)
+                                         (format #t " ~ax~a" char (length who))))
+                                      reacts)
+                            (display " ]"))
+                          (newline))))))))
                messages)
      (newline))))
 

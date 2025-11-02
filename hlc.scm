@@ -28,7 +28,6 @@
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-9)
   #:export (current-time/ms
-
             <clock>
             %make-clock
             make-clock
@@ -40,7 +39,8 @@
             clock-join
             clock-compare
             clock-compare-partial
-            clock<?))
+            clock<?
+            clock>?))
 
 (define (current-time/ms)
   (match (gettimeofday)
@@ -108,3 +108,6 @@
 
 (define (clock<? a b)
   (negative? (clock-compare a b)))
+
+(define (clock>? a b)
+  (positive? (clock-compare a b)))
