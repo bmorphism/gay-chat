@@ -177,38 +177,38 @@
   (certificate delete-certificate) ; SHA-256 hash
   (deleted-at delete-deleted-at))  ; epoch time (ms)
 
-(define (make-message id timestamp author certificate when contents)
-  (%make-message id timestamp author certificate when contents '() '() '()))
+(define (make-message id timestamp author cert-id when contents)
+  (%make-message id timestamp author cert-id when contents '() '() '()))
 
-(define* (message-edit msg id timestamp editor certificate when new)
+(define* (message-edit msg id timestamp editor cert-id when new)
   (match msg
-    (($ <message> id* timestamp* author certificate* created-at contents
+    (($ <message> id* timestamp* author cert-id* created-at contents
                   reacts edits deletes)
-     (let ((edit (make-edit id timestamp editor certificate when new)))
-       (%make-message id* timestamp* author certificate* created-at contents
+     (let ((edit (make-edit id timestamp editor cert-id when new)))
+       (%make-message id* timestamp* author cert-id* created-at contents
                       reacts (cons edit edits) deletes)))))
 
-(define* (message-delete msg id timestamp deleter certificate when)
+(define* (message-delete msg id timestamp deleter cert-id when)
   (match msg
-    (($ <message> id* author timestamp* certificate* created-at contents
+    (($ <message> id* author timestamp* cert-id* created-at contents
                   reacts edits deletes)
-     (let ((delete (make-delete id timestamp deleter certificate when)))
-       (%make-message id* author timestamp* certificate* created-at contents
+     (let ((delete (make-delete id timestamp deleter cert-id when)))
+       (%make-message id* author timestamp* cert-id* created-at contents
                       reacts edits (cons delete deletes))))))
 
-(define (%message-react msg id timestamp reactor certificate when char value)
+(define (%message-react msg id timestamp reactor cert-id when char value)
   (match msg
-    (($ <message> id* author timestamp* certificate* created-at contents
+    (($ <message> id* author timestamp* cert-id* created-at contents
                   reacts edits deletes)
-     (let ((react (make-react id timestamp reactor certificate when char value)))
-       (%make-message id* author timestamp* certificate* created-at contents
+     (let ((react (make-react id timestamp reactor cert-id when char value)))
+       (%make-message id* author timestamp* cert-id* created-at contents
                       (cons react reacts) edits deletes)))))
 
-(define (message-react msg id timestamp reactor certificate when char)
-  (%message-react msg id timestamp reactor certificate when char #t))
+(define (message-react msg id timestamp reactor cert-id when char)
+  (%message-react msg id timestamp reactor cert-id when char #t))
 
-(define (message-unreact msg id timestamp reactor certificate when char)
-  (%message-react msg id timestamp reactor certificate when char #f))
+(define (message-unreact msg id timestamp reactor cert-id when char)
+  (%message-react msg id timestamp reactor cert-id when char #f))
 
 (define (message<? a b)
   (if (= (message-created-at a) (message-created-at b))
@@ -318,25 +318,25 @@
 (define-actor (^chat-log become replica-id private-key)
   (define (query messages)
     (map (match-lambda
-           (($ <message> id timestamp author cert created-at contents
+           (($ <message> id timestamp author cert-id created-at contents
                          reacts edits deletes)
-            (list id author cert created-at contents
+            (list id author cert-id created-at contents
                   ;; Reacts.
                   (map (match-lambda
-                         (($ <react> _ _ reactor cert when char reacted?)
-                          (list reactor cert when char reacted?)))
+                         (($ <react> _ _ reactor cert-id when char reacted?)
+                          (list reactor cert-id when char reacted?)))
                        (sort reacts react<?))
-                  ;; Edits, in descending total order.
+                  ;; Edits, in reverse chronological order.
                   (map (match-lambda
-                         (($ <edit> _ _ editor cert when contents)
-                          (list editor cert when contents)))
+                         (($ <edit> _ _ editor cert-id when contents)
+                          (list editor cert-id when contents)))
                        (sort edits edit>?))
-                  ;; Deletes, in descending total order.
+                  ;; Deletes, in reverse chronological order.
                   (map (match-lambda
-                         (($ <delete> _ _ deleter cert when)
-                          (list deleter cert when)))
+                         (($ <delete> _ _ deleter cert-id when)
+                          (list deleter cert-id when)))
                        (sort deletes delete>?)))))
-         ;; Return messages in chronological order.
+         ;; Chronological order.
          (sort (hashmap-fold (lambda (id msg memo) (cons msg memo)) '() messages)
                message<?)))
   ;; TODO: Ignore events referring to messages that are not from
@@ -462,6 +462,64 @@
           log)))
   (define (partition-for-time time)
     (partition-ref (floor (/ time period))))
+  (define (messages-view messages certs)
+    (define (allowed? cert-id op author who)
+      (match (hashmap-ref certs cert-id)
+        (#f #f)
+        (cert
+         (certificate-allows? cert op author who))))
+    (define (latest-edit author edits)
+      (find (match-lambda
+              ((who cert-id when contents)
+               (allowed? cert-id 'edit author who)))
+            edits))
+    (define (latest-delete author deletes)
+      (find (match-lambda
+              ((who cert-id when)
+               (allowed? cert-id 'delete author who)))
+            deletes))
+    (define (reactions author reacts)
+      (fold (lambda (react reacts)
+              (match react
+                ((who cert-id when char reacted?)
+                 (if (allowed? cert-id 'react author who)
+                     (let ((whos (hashmap-ref reacts char '())))
+                       (if reacted?
+                           (hashmap-set reacts char
+                                        (lset-adjoin equal? whos who))
+                           (match (delete who whos)
+                             (() (hashmap-remove reacts char))
+                             (whos (hashmap-set reacts char whos)))))
+                     reacts))))
+            (make-hashvmap) reacts))
+    (fold-right
+     (lambda (msg memo)
+       (match msg
+         ((id author cert-id created-at contents reacts edits deletes)
+          (if (allowed? cert-id 'post author author)
+              (let ((edited (latest-edit author edits))
+                    (deleted (latest-delete author deletes)))
+                (cons (list id author cert-id
+                            ;; Created, modified, deleted timestamps.
+                            created-at
+                            (match edited
+                              (#f #f)
+                              ((_ _ when _) when))
+                            (match deleted
+                              (#f #f)
+                              ((_ _ when) when))
+                            ;; Contents, either the original, the latest
+                            ;; edit, or nothing if the message was
+                            ;; "deleted".
+                            (and (not deleted)
+                                 (match edited
+                                   (#f contents)
+                                   ((_ _ _ contents) contents)))
+                            ;; Emoji reactions.
+                            (reactions author reacts))
+                      memo))
+              memo))))
+     '() messages))
   (methods
    ((replica-id) replica-id)
    ;; Spawn a revokable proxy to our replica that we can share with
@@ -478,13 +536,17 @@
          (: log 'add-replica replica*)))
      (: partitions)))
    ((ref time)
-    (: (partition-for-time time) 'ref))
+    (messages-view (: (partition-for-time time) 'ref)
+                   (: certificates 'ref)))
    ;; Mainly for testing.
    ((all-messages)
-    (append-map (match-lambda ((_ . log) (: log 'ref)))
-                (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
-                                    '() (: partitions))
-                      (lambda (a b) (< (car a) (car b))))))
+    (messages-view
+     (append-map (match-lambda ((_ . log) (: log 'ref)))
+                 ;; Partitions in chronological order.
+                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
+                                     '() (: partitions))
+                       (lambda (a b) (< (car a) (car b)))))
+     (: certificates 'ref)))
    ((certificates) (: certificates 'ref))
    ((profiles) (: profiles 'ref))
    ((set-spn name) (: profiles 'set-spn name))
