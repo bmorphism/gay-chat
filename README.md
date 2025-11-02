@@ -100,26 +100,20 @@ This also has UI/UX implications that are out of scope for this
 experiment.  Without careful design, users could get the mistaken
 impression that Mallet has been kicked out of the chat room when, in
 fact, Mallet is only in the interim soft blocked state and can still
-see what everyone is doing.  If Mallet was granted admin access then
-the only recourse in this architecture is to revoke all relevant
-object capabilities and clean up the mess left behind.  Who watches
-the watchmen?
+see what everyone is doing.
 
 The overall security goal for this experiment is to prevent Mallet
 from irreparably destroying the shared state of the chat room, to the
 best of our ability, and additionally provide a means of holding
 Mallet accountable for anti-social/malicious actions that the system
-is technically incapable of preventing.  One of the major anti-goals
-of this experiment is to avoid the situation where we have encoded
-significant access control like revocation into the CRDTs and have to
-handle tricky situations such as two admins concurrently revoking each
-other's access.  Instead, we keep it simple: If Alice has an unrevoked
-object capability to write messages to Bob's chat log then she can
-write any message she would like to the chat log.  Everything layered
-on top, like the certificates, is for the sake of the users and admins
-to have some control over the *eventual view* of that chat log in
-well-behaved clients.  Is this good enough?  We're in search of the
-right balance between eventual and strong consistency.
+is technically incapable of preventing.  We try keep it simple: If
+Alice has an unrevoked object capability to write messages to Bob's
+chat log then she can write any message she would like to the chat
+log.  Everything layered on top, like the certificates, is for the
+sake of the users and admins to have some control over the *eventual
+view* of that chat log in well-behaved clients.  Is this good enough?
+We're in search of the right balance between eventual and strong
+consistency.
 
 Finally, note that this prototype is focused on exploring the core of
 a minimally viable p2p chat built on capability security principles
