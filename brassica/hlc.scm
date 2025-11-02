@@ -24,7 +24,7 @@
 ;;;
 ;;; Code:
 
-(define-module (hlc)
+(define-module (brassica hlc)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-9)
   #:export (current-time/ms

@@ -20,7 +20,8 @@
 ;;;
 ;;; Code:
 
-(define-module (crdt)
+(define-module (brassica crdt)
+  #:use-module (brassica hlc)
   #:use-module ((goblins) #:hide ($))
   #:use-module ((goblins) #:select (($ . :)))
   #:use-module (goblins abstract-types)
@@ -30,7 +31,6 @@
   #:use-module (goblins contrib syrup)
   #:use-module (goblins utils crypto)
   #:use-module (goblins utils hashmap)
-  #:use-module (hlc)
   #:use-module (ice-9 match)
   #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-1)

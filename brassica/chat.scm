@@ -20,9 +20,9 @@
 ;;;
 ;;; Code:
 
-(define-module (chat)
-  #:use-module (crdt)
-  #:use-module (hlc)
+(define-module (brassica chat)
+  #:use-module (brassica crdt)
+  #:use-module (brassica hlc)
   #:use-module ((goblins) #:hide ($))
   #:use-module ((goblins) #:select (($ . :)))
   #:use-module (goblins actor-lib cell)

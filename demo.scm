@@ -12,7 +12,7 @@
 ;;; See the License for the specific language governing permissions and
 ;;; limitations under the License.
 
-(use-modules (chat)
+(use-modules (brassica chat)
              (fibers)
              ((goblins) #:hide ($))
              ((goblins) #:select (($ . :)))
