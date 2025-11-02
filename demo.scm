@@ -97,79 +97,86 @@
 ;;
 ;; TODO: Move all the filtering based on certificate to the ^chat-room
 ;; actor.
-(define (render-chat title group messages)
-  (match group
-    ((certs names)
-     (define (allowed? cert-id op author who)
-       (match (hashmap-ref certs cert-id)
-         (#f #f)
-         (cert
-          (certificate-allows? cert op author who))))
-     (format #t "# Chat log for ~a\n" title)
-     (newline)
-     (for-each
-      (match-lambda
-        ((id author cert-id created-at contents reacts edits deletes)
-         (when (allowed? cert-id 'post author author)
-           (let ((name (hashmap-ref names author "?????"))
-                 (reacts
-                  (sort
-                   (hashmap-fold
-                    (lambda (char whos reacts)
-                      (if (null? whos)
-                          reacts
-                          (cons (cons char whos) reacts)))
-                    '()
-                    (fold (lambda (react reacts)
-                            (match react
-                              ((who cert-id when char reacted?)
-                               (if (allowed? cert-id 'react author who)
-                                   (let ((whos (hashmap-ref reacts char '())))
-                                     (hashmap-set reacts char
-                                                  (if reacted?
-                                                      (lset-adjoin equal? whos who)
-                                                      (delete who whos))))
-                                   reacts))))
-                          (make-hashvmap) reacts))
-                   (lambda (a b)
-                     (char<? (car a) (car b)))))
-                 (edit (find (match-lambda
-                               ((who cert when contents)
-                                (allowed? cert-id 'edit author who)))
-                             edits))
-                 (delete (find (match-lambda
-                                 ((who cert when)
-                                  (allowed? cert-id 'delete author who)))
-                               deletes)))
-             (cond
-              (delete
-               (format #t "<~a>\t--- deleted ---\n" name))
-              (else
-               (let ((contents (match edit
-                                 (#f contents)
-                                 ((_ _ _ contents) contents))))
-                 (format #t "<~a>\t~a" name contents)
-                 (unless (null? reacts)
-                   (display "\t[")
-                   (for-each (match-lambda
-                               ((char . whos)
-                                (format #t " ~ax~a" char (length whos))))
-                             reacts)
-                   (display " ]"))
-                 (newline))))))))
-      messages)
-     (newline))))
+(define (render-chat title certs names messages)
+  (define (allowed? cert-id op author who)
+    (match (hashmap-ref certs cert-id)
+      (#f #f)
+      (cert
+       (certificate-allows? cert op author who))))
+  (format #t "# Chat log for ~a\n" title)
+  (newline)
+  (for-each
+   (match-lambda
+     ((id author cert-id created-at contents reacts edits deletes)
+      (when (allowed? cert-id 'post author author)
+        (let ((name (hashmap-ref names author "?????"))
+              (reacts
+               (sort
+                (hashmap-fold
+                 (lambda (char whos reacts)
+                   (if (null? whos)
+                       reacts
+                       (cons (cons char whos) reacts)))
+                 '()
+                 (fold (lambda (react reacts)
+                         (match react
+                           ((who cert-id when char reacted?)
+                            (if (allowed? cert-id 'react author who)
+                                (let ((whos (hashmap-ref reacts char '())))
+                                  (hashmap-set reacts char
+                                               (if reacted?
+                                                   (lset-adjoin equal? whos who)
+                                                   (delete who whos))))
+                                reacts))))
+                       (make-hashvmap) reacts))
+                (lambda (a b)
+                  (char<? (car a) (car b)))))
+              (edit (find (match-lambda
+                            ((who cert when contents)
+                             (allowed? cert-id 'edit author who)))
+                          edits))
+              (delete (find (match-lambda
+                              ((who cert when)
+                               (allowed? cert-id 'delete author who)))
+                            deletes)))
+          (cond
+           (delete
+            (format #t "<~a>\t--- deleted ---\n" name))
+           (else
+            (let ((contents (match edit
+                              (#f contents)
+                              ((_ _ _ contents) contents))))
+              (format #t "<~a>\t~a" name contents)
+              (unless (null? reacts)
+                (display "\t[")
+                (for-each (match-lambda
+                            ((char . whos)
+                             (format #t " ~ax~a" char (length whos))))
+                          reacts)
+                (display " ]"))
+              (newline))))))))
+   messages)
+  (newline))
 
 (define (render-chats)
   (with-vat vat-alice
-    (render-chat "Alice" (: chat-alice 'group) (: chat-alice 'ref-all)))
+    (render-chat "Alice"
+                 (: chat-alice 'certificates)
+                 (: chat-alice 'profiles)
+                 (: chat-alice 'all-messages)))
   (with-vat vat-bob
-    (render-chat "Bob" (: chat-bob 'group) (: chat-bob 'ref-all)))
+    (render-chat "Bob"
+                 (: chat-bob 'certificates)
+                 (: chat-bob 'profiles)
+                 (: chat-bob 'all-messages)))
   (with-vat vat-carol
-    (render-chat "Carol" (: chat-carol 'group) (: chat-carol 'ref-all))))
+    (render-chat "Carol"
+                 (: chat-carol 'certificates)
+                 (: chat-carol 'profiles)
+                 (: chat-carol 'all-messages))))
 
 (define (for-each-message proc chat)
-  (let lp ((messages (: chat 'ref-all)))
+  (let lp ((messages (: chat 'all-messages)))
     (match messages
       (() #t)
       ((msg . messages)
@@ -210,67 +217,64 @@
 
 ;; Edit, delete, and react to previously sent messages.
 (with-vat vat-alice
-  (match (: chat-alice 'group)
-    ((certs names)
-     (for-each-message
-      (match-lambda
-        ((id author cert created-at contents reacts edits deletes)
-         (cond
-          ((and (equal? (hashmap-ref names author) "Bob")
-                (equal? contents "Hey, Alice!"))
-           ;; Alice reacts to Bob's greeting.
-           (<-np chat-alice 'react cert-alice id created-at #\🌊))
-          ((and (equal? (hashmap-ref names author) "Carol")
-                (equal? contents "Yeah, it's so grood."))
-           ;; Alice cannot delete Carol's message.
-           (<-np chat-alice 'delete cert-alice id created-at)))))
-      chat-alice))))
+  (let ((names (: chat-alice 'profiles)))
+    (for-each-message
+     (match-lambda
+       ((id author cert created-at contents reacts edits deletes)
+        (cond
+         ((and (equal? (hashmap-ref names author) "Bob")
+               (equal? contents "Hey, Alice!"))
+          ;; Alice reacts to Bob's greeting.
+          (<-np chat-alice 'react cert-alice id created-at #\🌊))
+         ((and (equal? (hashmap-ref names author) "Carol")
+               (equal? contents "Yeah, it's so grood."))
+          ;; Alice cannot delete Carol's message.
+          (<-np chat-alice 'delete cert-alice id created-at)))))
+     chat-alice)))
 
 (with-vat vat-bob
-  (match (: chat-bob 'group)
-    ((certs names)
-     (for-each-message
-      (match-lambda
-        ((id author cert created-at contents reacts edits deletes)
-         (cond
-          ((and (equal? (hashmap-ref names author) "Alice")
-                (equal? contents "Hello"))
-           ;; Bob reacts to Carol's greeting.
-           (<-np chat-bob 'react cert-bob id created-at #\👋)
-           ;; Bob cannot edit Carol's message.
-           (<-np chat-bob 'edit cert-bob id created-at "owo"))
-          ((and (equal? (hashmap-ref names author) "Bob")
-                (equal? contents "asdf"))
-           ;; Bob deletes his cat's post.
-           (<-np chat-bob 'delete cert-bob id created-at))
-          ((and (equal? (hashmap-ref names author) "Alice")
-                (equal? contents "This is a neat chat demo!"))
-           ;; Bob agrees that this demo is neat.
-           (<-np chat-bob 'react cert-bob id created-at #\💯)))))
-      chat-bob))))
+  (let ((names (: chat-bob 'profiles)))
+    (for-each-message
+     (match-lambda
+       ((id author cert created-at contents reacts edits deletes)
+        (cond
+         ((and (equal? (hashmap-ref names author) "Alice")
+               (equal? contents "Hello"))
+          ;; Bob reacts to Carol's greeting.
+          (<-np chat-bob 'react cert-bob id created-at #\👋)
+          ;; Bob cannot edit Carol's message.
+          (<-np chat-bob 'edit cert-bob id created-at "owo"))
+         ((and (equal? (hashmap-ref names author) "Bob")
+               (equal? contents "asdf"))
+          ;; Bob deletes his cat's post.
+          (<-np chat-bob 'delete cert-bob id created-at))
+         ((and (equal? (hashmap-ref names author) "Alice")
+               (equal? contents "This is a neat chat demo!"))
+          ;; Bob agrees that this demo is neat.
+          (<-np chat-bob 'react cert-bob id created-at #\💯)))))
+     chat-bob)))
 
 (with-vat vat-carol
-  (match (: chat-carol 'group)
-    ((certs names)
-     (for-each-message
-      (match-lambda
-        ((id author cert created-at contents reacts edits deletes)
-         (cond
-          ((and (equal? (hashmap-ref names author) "Alice")
-                (equal? contents "Hello"))
-           ;; Carol reacts to Alice's greeting.
-           (<-np chat-carol 'react cert-carol id created-at #\👋))
-          ((and (equal? (hashmap-ref names author) "Alice")
-                (equal? contents "This is a neat chat demo!"))
-           ;; Carol accidentally reacts with a thumbs down emoji and
-           ;; quickly unreacts.
-           (<-np chat-carol 'react cert-carol id created-at #\👎)
-           (<-np chat-carol 'unreact cert-carol id created-at #\👎))
-          ((and (equal? (hashmap-ref names author) "Carol")
-                (equal? contents "Yeah, it's so grood."))
-           ;; Carol edits her previous message to fix a typo.
-           (<-np chat-carol 'edit cert-carol id created-at "Yeah, it's so good!")))))
-      chat-carol))))
+  (let ((names (: chat-carol 'profiles)))
+    (for-each-message
+     (match-lambda
+       ((id author cert created-at contents reacts edits deletes)
+        (cond
+         ((and (equal? (hashmap-ref names author) "Alice")
+               (equal? contents "Hello"))
+          ;; Carol reacts to Alice's greeting.
+          (<-np chat-carol 'react cert-carol id created-at #\👋))
+         ((and (equal? (hashmap-ref names author) "Alice")
+               (equal? contents "This is a neat chat demo!"))
+          ;; Carol accidentally reacts with a thumbs down emoji and
+          ;; quickly unreacts.
+          (<-np chat-carol 'react cert-carol id created-at #\👎)
+          (<-np chat-carol 'unreact cert-carol id created-at #\👎))
+         ((and (equal? (hashmap-ref names author) "Carol")
+               (equal? contents "Yeah, it's so grood."))
+          ;; Carol edits her previous message to fix a typo.
+          (<-np chat-carol 'edit cert-carol id created-at "Yeah, it's so good!")))))
+     chat-carol)))
 
 ;; Give the group time to converge again.
 (sleep 1)

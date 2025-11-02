@@ -58,11 +58,11 @@
 
 
 ;;;
-;;; Certificates and profiles
+;;; Certificates
 ;;;
 
 (define-record-type <certificate>
-  (make-certificate id parent signer controllers predicate revoked?)
+  (%make-certificate id parent signer controllers predicate revoked?)
   certificate?
   (id certificate-id)                   ; SHA-256 hash
   (parent certificate-parent)           ; SHA-256 hash
@@ -71,41 +71,7 @@
   (predicate certificate-predicate)     ; procedure
   (revoked? certificate-revoked?))      ; boolean
 
-(define-record-type <profile>
-  (%make-profile public-key self-proposed-name)
-  profile?
-  (public-key profile-public-key)
-  (self-proposed-name profile-self-proposed-name))
-
-(define (make-profile timestamp public-key name)
-  (%make-profile public-key (make-lww-register timestamp name)))
-
-(define-record-type <group>
-  (%make-group certificates profiles)
-  group?
-  (certificates group-certificates)
-  (profiles group-profiles))
-
-(define (make-group)
-  (%make-group (make-hashmap) (make-hashmap)))
-
-(define (set-group-profile-self-proposed-name group timestamp public-key name)
-  (match group
-    (($ <group> certificates profiles)
-     (match (hashmap-ref profiles public-key)
-       (#f
-        (let ((profile (make-profile timestamp public-key name)))
-          (%make-group certificates (hashmap-set profiles public-key profile))))
-       (($ <profile> public-key spn)
-        (let ((new (lww-register-set spn timestamp name)))
-          (if (eq? spn new)
-              group
-              (let ((profile (%make-profile public-key new)))
-                (%make-group certificates
-                             (hashmap-set profiles public-key profile))))))))))
-
-(define (add-group-certificate group root-signer id parent signer
-                               controllers exp)
+(define (make-certificate root-signer id parent signer controllers exp)
   ;; Simple combinator language for capability attenuation.
   (define (compile-predicate exp)
     (match exp
@@ -120,49 +86,47 @@
       (('allow-self)
        (lambda (op author who)
          (equal? author who)))))
-  (match group
-    (($ <group> certificates profiles)
-     (define (valid parent)
-       (let* ((pred (compile-predicate exp))
-              (cert (make-certificate id parent signer controllers pred #f)))
-         (%make-group (hashmap-set certificates id cert) profiles)))
-     (if parent
-         (match (hashmap-ref certificates parent)
-           ;; No such parent; invalid.
-           (#f group)
-           ((and parent ($ <certificate> _ _ _ parent-controllers))
-            (if (member signer parent-controllers)
-                ;; Valid certificate.
-                (valid parent)
-                ;; Parent capability was not for the signer of this
-                ;; capability; invalid.
-                group)))
-         ;; Root certificates have no parent.  The signer must be the
-         ;; root signer in this case.
-         (if (equal? signer root-signer)
-             (valid #f)
-             group)))))
+  (and (or (and (not parent) (equal? signer root-signer))
+           (member signer (certificate-controllers parent)))
+       (let ((pred (compile-predicate exp)))
+         (%make-certificate id parent signer controllers pred #f))))
 
-(define (revoke-group-certificate group cert-id who)
-  (match group
-    (($ <group> certificates profiles)
-     (match (hashmap-ref certificates cert-id)
-       ;; No such cert; no-op.
-       (#f group)
-       (($ <certificate> id parent signer controllers predicate revoked?)
-        (cond
-         ;; Already revoked; no-op.
-         (revoked? group)
-         ;; Revoker is the signer; revoke!
-         ((equal? signer who)
-          (let ((revoked-cert (make-certificate id parent signer controllers
-                                                predicate #t)))
-            (%make-group (hashmap-set certificates cert-id revoked-cert)
-                         profiles)))
-         ;; Revoker is not the signer; rejected.
-         ;;
-         ;; TODO: Record this incident for auditing purposes.
-         (else group)))))))
+(define (revoke-certificate certificate who)
+  (match certificate
+    (($ <certificate> id parent signer controllers predicate revoked?)
+     (cond
+      ;; Already revoked; no-op.
+      (revoked? certificate)
+      ;; Revoker is the signer; revoke!
+      ((equal? signer who)
+       (%make-certificate id parent signer controllers predicate #t))
+      ;; Revoker is not the signer; rejected.
+      ;;
+      ;; TODO: Caller should record this incident for auditing
+      ;; purposes.
+      (else #f)))))
+
+
+;;;
+;;; Profiles
+;;;
+
+(define-record-type <profile>
+  (%make-profile who self-proposed-name)
+  profile?
+  (who profile-who)
+  (self-proposed-name profile-self-proposed-name))
+
+(define (make-profile timestamp who name)
+  (%make-profile who (make-lww-register timestamp name)))
+
+(define (set-profile-self-proposed-name profile timestamp name)
+  (match profile
+    (($ <profile> who spn)
+     (let ((new (lww-register-set spn timestamp name)))
+       (if (eq? spn new)
+           profile
+           (%make-profile who new))))))
 
 
 ;;;
@@ -283,32 +247,64 @@
    ((public-key) public-key)
    ((sign data) (sign data private-key))))
 
-;; The group CRDT accumulates certificate and user profile data.
-;;
-;; TODO: Petnames
-(define-actor (^group become replica-id root-signer private-key)
-  (define (query group)
-    (match group
-      (($ <group> certificates profiles)
-       (list certificates
-             (hashmap-fold
-              (lambda (public-key profile memo)
-                (match profile
-                  (($ <profile> _ spn)
-                   (hashmap-set memo public-key (lww-register-value spn)))))
-              (make-hashmap) profiles)))))
-  (define (effect id timestamp who exp group)
+;; The certificates CRDT accumulates a set of certificate
+;; capabilities.
+(define-actor (^certificates become replica-id root-signer private-key)
+  (define (effect id timestamp who exp certificates)
     (match exp
-      (('set-spn name)
-       (set-group-profile-self-proposed-name group timestamp who name))
-      (('add-certificate parent controllers pred)
-       (add-group-certificate group root-signer id parent who controllers pred))
+      (('add-certificate parent-id controllers pred)
+       (let ((parent (hashmap-ref certificates parent-id)))
+         (match (make-certificate root-signer id parent who controllers pred)
+           (#f certificates)
+           (cert (hashmap-set certificates id cert)))))
       (('revoke-certificate cert-id)
-       (revoke-group-certificate group cert-id who))
-      (_ group)))
+       (match (hashmap-ref certificates cert-id)
+         (#f certificates)
+         (cert
+          (match (revoke-certificate cert who)
+            (#f certificates)
+            (new
+             (if (eq? cert new)
+                 certificates
+                 (hashmap-set certificates cert-id new)))))))
+      (_ certificates)))
   (define crdt
     (spawn ^crdt replica-id private-key
-           #:init (make-group)
+           #:init (make-hashmap)
+           #:effect effect))
+  (methods
+   ((add-replica replica) (: crdt 'add-replica replica))
+   ((ref) (: crdt 'ref))
+   ((missing event-ids) (: crdt 'missing event-ids))
+   ((push events) (: crdt 'push events))
+   ((add-certificate parent-id controllers pred)
+    (: crdt 'commit `(add-certificate ,parent-id ,controllers ,pred)))
+   ((revoke-certificate cert-id)
+    (: crdt 'commit `(revoke-certificate ,cert-id)))))
+
+;; The profiles CRDT accumulates user metadata.
+(define-actor (^profiles become replica-id private-key)
+  (define (query profiles)
+    (hashmap-fold
+     (lambda (who profile memo)
+       (match profile
+         (($ <profile> _ spn)
+          (hashmap-set memo who (lww-register-value spn)))))
+     (make-hashmap) profiles))
+  (define (effect id timestamp who exp profiles)
+    (match exp
+      (('set-spn name)
+       (match (hashmap-ref profiles who)
+         (#f (hashmap-set profiles who (make-profile timestamp who name)))
+         (profile
+           (let ((new (set-profile-self-proposed-name profile timestamp name)))
+             (if (eq? profile new)
+                 profiles
+                 (hashmap-set profiles who new))))))
+      (_ profiles)))
+  (define crdt
+    (spawn ^crdt replica-id private-key
+           #:init (make-hashmap)
            #:query query
            #:effect effect))
   (methods
@@ -316,11 +312,7 @@
    ((ref) (: crdt 'ref))
    ((missing event-ids) (: crdt 'missing event-ids))
    ((push events) (: crdt 'push events))
-   ((set-spn name) (: crdt 'commit `(set-spn ,name)))
-   ((add-certificate parent controllers pred)
-    (: crdt 'commit `(add-certificate ,parent ,controllers ,pred)))
-   ((revoke-certificate cert-id)
-    (: crdt 'commit `(revoke-certificate ,cert-id)))))
+   ((set-spn name) (: crdt 'commit `(set-spn ,name)))))
 
 ;; A chat log holds one chunk of a chat room's history.
 (define-actor (^chat-log become replica-id private-key)
@@ -414,11 +406,16 @@
      ((replica-id) (<- replica 'replica-id))
      ((missing event-ids) (<- replica 'missing/messages event-ids key))
      ((push events) (<- replica 'push/messages events key))))
-  (define (^group-replica become replica)
+  (define (^certificates-replica become replica)
     (methods
      ((replica-id) (<- replica 'replica-id))
-     ((missing event-ids) (<- replica 'missing/group event-ids))
-     ((push events) (<- replica 'push/group events))))
+     ((missing event-ids) (<- replica 'missing/certificates event-ids))
+     ((push events) (<- replica 'push/certificates events))))
+  (define (^profiles-replica become replica)
+    (methods
+     ((replica-id) (<- replica 'replica-id))
+     ((missing event-ids) (<- replica 'missing/profiles event-ids))
+     ((push events) (<- replica 'push/profiles events))))
   (define (^chat-room-replica become)
     (methods
      ((replica-id) replica-id)
@@ -426,10 +423,14 @@
       (: (partition-ref key) 'missing heads))
      ((push/messages events key)
       (: (partition-ref key) 'push events))
-     ((missing/group heads)
-      (: group 'missing heads))
-     ((push/group events)
-      (: group 'push events))))
+     ((missing/certificates heads)
+      (: certificates 'missing heads))
+     ((push/certificates events)
+      (: certificates 'push events))
+     ((missing/profiles heads)
+      (: profiles 'missing heads))
+     ((push/profiles events)
+      (: profiles 'push events))))
   (define spn (: id 'spn))
   (define private-key (: id 'private-key))
   (define public-key (: id 'public-key))
@@ -437,10 +438,10 @@
   (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
   ;; Our replica interface.
   (define replica (spawn ^chat-room-replica))
-  ;; The group stores user profile information.
-  (define group (spawn ^group replica-id root-signer private-key))
+  (define certificates (spawn ^certificates replica-id root-signer private-key))
+  (define profiles (spawn ^profiles replica-id private-key))
   ;; Tell the group our self-proposed name.
-  (: group 'set-spn spn)
+  (: profiles 'set-spn spn)
   (define replicas (spawn ^cell '()))
   ;; The chat log is partitioned by time to keep the size of each
   ;; individual CRDT small and allow for dropping entire chunks of
@@ -469,7 +470,8 @@
     (spawn-revokable-and-revoker replica))
    ((add-replica replica)
     (: replicas (cons replica (: replicas)))
-    (: group 'add-replica (spawn ^group-replica replica))
+    (: certificates 'add-replica (spawn ^certificates-replica replica))
+    (: profiles 'add-replica (spawn ^profiles-replica replica))
     (hashmap-for-each
      (lambda (key log)
        (let ((replica* (spawn ^partition-replica replica key)))
@@ -478,17 +480,18 @@
    ((ref time)
     (: (partition-for-time time) 'ref))
    ;; Mainly for testing.
-   ((ref-all)
+   ((all-messages)
     (append-map (match-lambda ((_ . log) (: log 'ref)))
                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
                                     '() (: partitions))
                       (lambda (a b) (< (car a) (car b))))))
-   ((group) (: group 'ref))
-   ((set-spn name) (: group 'set-spn name))
+   ((certificates) (: certificates 'ref))
+   ((profiles) (: profiles 'ref))
+   ((set-spn name) (: profiles 'set-spn name))
    ((add-certificate #:key parent (controllers '()) (predicate #t))
-    (: group 'add-certificate parent controllers predicate))
+    (: certificates 'add-certificate parent controllers predicate))
    ((revoke-certificate cert-id)
-    (: group 'revoke-certificate cert-id))
+    (: certificates 'revoke-certificate cert-id))
    ((post cert-id contents #:optional (now (current-time/ms)))
     (: (partition-for-time now) 'post cert-id now contents))
    ((edit cert-id msg-id created contents #:optional (now (current-time/ms)))
