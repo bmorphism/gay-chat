@@ -179,9 +179,20 @@
   (certificate message-certificate) ; SHA-256 hash
   (created-at message-created-at)   ; epoch time (ms)
   (contents message-contents)       ; any
-  (reacts message-reacts)           ; char -> user -> LWW register
+  (reacts message-reacts)           ; list of <react>
   (edits message-edits)             ; list of <edit>
   (deletes message-deletes))        ; list of <delete>
+
+(define-record-type <react>
+  (make-react id timestamp reactor certificate reacted-at char reacted?)
+  react?
+  (id react-id)                   ; SHA-256 hash
+  (timestamp react-timestamp)     ; HLC
+  (reactor react-reactor)         ; ed25519 public key
+  (certificate react-certificate) ; SHA-256 hash
+  (reacted-at react-reacted-at)   ; epoch time (ms)
+  (char react-char)               ; char
+  (reacted? react-reacted?))      ; boolean
 
 (define-record-type <edit>
   (make-edit id timestamp editor certificate modified-at contents)
@@ -203,8 +214,7 @@
   (deleted-at delete-deleted-at))  ; epoch time (ms)
 
 (define (make-message id timestamp author certificate when contents)
-  (%make-message id timestamp author certificate when contents
-                 (make-hashvmap) '() '()))
+  (%make-message id timestamp author certificate when contents '() '() '()))
 
 (define* (message-edit msg id timestamp editor certificate when new)
   (match msg
@@ -219,42 +229,30 @@
     (($ <message> id* author timestamp* certificate* created-at contents
                   reacts edits deletes)
      (let ((delete (make-delete id timestamp deleter certificate when)))
-       (%make-message id author timestamp* certificate* created-at contents
+       (%make-message id* author timestamp* certificate* created-at contents
                       reacts edits (cons delete deletes))))))
 
-;; TODO: Track reactor's event id, timestamp (the real one), and
-;; certificate.
-(define (%message-react msg id timestamp reactor certificate char value)
+(define (%message-react msg id timestamp reactor certificate when char value)
   (match msg
     (($ <message> id* author timestamp* certificate* created-at contents
                   reacts edits deletes)
-     (let ((char-reacts (or (hashmap-ref reacts char) (make-hashmap))))
-       (match (hashmap-ref char-reacts reactor)
-         (#f
-          (let* ((register (make-lww-register timestamp value))
-                 (char-reacts (hashmap-set char-reacts reactor register))
-                 (reacts (hashmap-set reacts char char-reacts)))
-            (%make-message id* author timestamp* certificate* created-at contents
-                           reacts edits deletes)))
-         (register
-          (let ((new (lww-register-set register timestamp value)))
-            (if (eq? register new)
-                msg
-                (let* ((char-reacts (hashmap-set char-reacts reactor new))
-                       (reacts (hashmap-set reacts char char-reacts)))
-                  (%make-message id* author timestamp* certificate* created-at contents
-                                 reacts edits deletes))))))))))
+     (let ((react (make-react id timestamp reactor certificate when char value)))
+       (%make-message id* author timestamp* certificate* created-at contents
+                      (cons react reacts) edits deletes)))))
 
-(define (message-react msg id timestamp reactor certificate char)
-  (%message-react msg id timestamp reactor certificate char #t))
+(define (message-react msg id timestamp reactor certificate when char)
+  (%message-react msg id timestamp reactor certificate when char #t))
 
-(define (message-unreact msg id timestamp reactor certificate char)
-  (%message-react msg id timestamp reactor certificate char #f))
+(define (message-unreact msg id timestamp reactor certificate when char)
+  (%message-react msg id timestamp reactor certificate when char #f))
 
 (define (message<? a b)
   (if (= (message-created-at a) (message-created-at b))
       (clock<? (message-timestamp a) (message-timestamp b))
       (< (message-created-at a) (message-created-at b))))
+
+(define (react<? a b)
+  (clock<? (react-timestamp a) (react-timestamp b)))
 
 (define (edit>? a b)
   (clock>? (edit-timestamp a) (edit-timestamp b)))
@@ -331,18 +329,11 @@
            (($ <message> id timestamp author cert created-at contents
                          reacts edits deletes)
             (list id author cert created-at contents
-                  ;; Reactions.
-                  (hashmap-fold
-                   (lambda (char registers memo)
-                     (match (hashmap-fold
-                             (lambda (id register memo)
-                               (if (lww-register-value register)
-                                   (cons id memo)
-                                   memo))
-                             '() registers)
-                       (() memo)
-                       (reacts (cons (cons char reacts) memo))))
-                   '() reacts)
+                  ;; Reacts.
+                  (map (match-lambda
+                         (($ <react> _ _ reactor cert when char reacted?)
+                          (list reactor cert when char reacted?)))
+                       (sort reacts react<?))
                   ;; Edits, in descending total order.
                   (map (match-lambda
                          (($ <edit> _ _ editor cert when contents)
@@ -356,28 +347,30 @@
          ;; Return messages in chronological order.
          (sort (hashmap-fold (lambda (id msg memo) (cons msg memo)) '() messages)
                message<?)))
+  ;; TODO: Ignore events referring to messages that are not from
+  ;; causal predecessors.
   (define (effect id timestamp who exp messages)
     (match exp
-      (('post cert created contents)
+      (('post cert-id created contents)
        (hashmap-set messages id
-                    (make-message id timestamp who cert created contents)))
-      (('edit cert msg-id when contents)
+                    (make-message id timestamp who cert-id created contents)))
+      (('edit cert-id msg-id when contents)
        (let ((msg (hashmap-ref messages msg-id)))
          (hashmap-set messages msg-id
-                      (message-edit msg id timestamp who cert
+                      (message-edit msg id timestamp who cert-id
                                     when contents))))
-      (('delete cert msg-id when)
+      (('delete cert-id msg-id when)
        (let ((msg (hashmap-ref messages msg-id)))
          (hashmap-set messages msg-id
-                      (message-delete msg id timestamp who cert when))))
-      (('react cert msg-id char)
+                      (message-delete msg id timestamp who cert-id when))))
+      (('react cert-id msg-id when char)
        (hashmap-set messages msg-id
                     (message-react (hashmap-ref messages msg-id)
-                                   id timestamp who cert char)))
-      (('unreact cert msg-id char)
+                                   id timestamp who cert-id when char)))
+      (('unreact cert-id msg-id when char)
        (hashmap-set messages msg-id
                     (message-unreact (hashmap-ref messages msg-id)
-                                     id timestamp who cert char)))
+                                     id timestamp who cert-id when char)))
       (_ messages)))
   (define crdt
     (spawn ^crdt replica-id private-key
@@ -395,10 +388,10 @@
     (: crdt 'commit `(edit ,cert-id ,msgid ,when ,contents)))
    ((delete cert-id msgid when)
     (: crdt 'commit `(delete ,cert-id ,msgid ,when)))
-   ((react cert-id msgid char)
-    (: crdt 'commit `(react ,cert-id ,msgid ,char)))
-   ((unreact cert-id msgid char)
-    (: crdt 'commit `(unreact ,cert-id ,msgid ,char)))))
+   ((react cert-id msgid when char)
+    (: crdt 'commit `(react ,cert-id ,msgid ,when ,char)))
+   ((unreact cert-id msgid when char)
+    (: crdt 'commit `(unreact ,cert-id ,msgid ,when ,char)))))
 
 (define (spawn-revokable-and-revoker obj)
   (define token (list 'revoke))
@@ -496,15 +489,13 @@
     (: group 'add-certificate parent controllers predicate))
    ((revoke-certificate cert-id)
     (: group 'revoke-certificate cert-id))
-   ((post cert contents #:optional (now (current-time/ms)))
-    (: (partition-for-time now) 'post cert now contents))
-   ((edit cert msg-id created contents #:optional (now (current-time/ms)))
-    (: (partition-for-time created) 'edit cert msg-id now contents))
-   ((delete cert msg-id created #:optional (now (current-time/ms)))
-    (: (partition-for-time created) 'delete cert msg-id now))
-   ;; TODO: We're not tracking when someone reacted, but maybe we
-   ;; should?
-   ((react cert msg-id created char)
-    (: (partition-for-time created) 'react cert msg-id char))
-   ((unreact cert msg-id created char)
-    (: (partition-for-time created) 'unreact cert msg-id char))))
+   ((post cert-id contents #:optional (now (current-time/ms)))
+    (: (partition-for-time now) 'post cert-id now contents))
+   ((edit cert-id msg-id created contents #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'edit cert-id msg-id now contents))
+   ((delete cert-id msg-id created #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'delete cert-id msg-id now))
+   ((react cert-id msg-id created char #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'react cert-id msg-id now char))
+   ((unreact cert-id msg-id created char #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'unreact cert-id msg-id now char))))

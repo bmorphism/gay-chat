@@ -202,6 +202,7 @@
                 (else
                  (hashmap-set missing event-id #t))))
              missing event-ids))))
+   ;; Push (possibly) new events to the event log.
    ((push blobs)
     (let ((pending*
            ;; Add the new events to the pending set, filtering out

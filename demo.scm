@@ -107,35 +107,57 @@
           (certificate-allows? cert op author who))))
      (format #t "# Chat log for ~a\n" title)
      (newline)
-     (for-each (match-lambda
-                 ((id author cert-id created-at contents reacts edits deletes)
-                  (when (allowed? cert-id 'post author author)
-                    (let ((name (hashmap-ref names author "?????"))
-                          (edit (find (match-lambda
-                                        ((who cert when contents)
-                                         (allowed? cert-id 'edit author who)))
-                                      edits))
-                          (delete (find (match-lambda
-                                          ((who cert when)
-                                           (allowed? cert-id 'delete author who)))
-                                        deletes)))
-                      (cond
-                       (delete
-                        (format #t "<~a>\t--- deleted ---\n" name))
-                       (else
-                        (let ((contents (match edit
-                                          (#f contents)
-                                          ((_ _ _ contents) contents))))
-                          (format #t "<~a>\t~a" name contents)
-                          (unless (null? reacts)
-                            (display "\t[")
-                            (for-each (match-lambda
-                                        ((char . who)
-                                         (format #t " ~ax~a" char (length who))))
-                                      reacts)
-                            (display " ]"))
-                          (newline))))))))
-               messages)
+     (for-each
+      (match-lambda
+        ((id author cert-id created-at contents reacts edits deletes)
+         (when (allowed? cert-id 'post author author)
+           (let ((name (hashmap-ref names author "?????"))
+                 (reacts
+                  (sort
+                   (hashmap-fold
+                    (lambda (char whos reacts)
+                      (if (null? whos)
+                          reacts
+                          (cons (cons char whos) reacts)))
+                    '()
+                    (fold (lambda (react reacts)
+                            (match react
+                              ((who cert-id when char reacted?)
+                               (if (allowed? cert-id 'react author who)
+                                   (let ((whos (hashmap-ref reacts char '())))
+                                     (hashmap-set reacts char
+                                                  (if reacted?
+                                                      (lset-adjoin equal? whos who)
+                                                      (delete who whos))))
+                                   reacts))))
+                          (make-hashvmap) reacts))
+                   (lambda (a b)
+                     (char<? (car a) (car b)))))
+                 (edit (find (match-lambda
+                               ((who cert when contents)
+                                (allowed? cert-id 'edit author who)))
+                             edits))
+                 (delete (find (match-lambda
+                                 ((who cert when)
+                                  (allowed? cert-id 'delete author who)))
+                               deletes)))
+             (cond
+              (delete
+               (format #t "<~a>\t--- deleted ---\n" name))
+              (else
+               (let ((contents (match edit
+                                 (#f contents)
+                                 ((_ _ _ contents) contents))))
+                 (format #t "<~a>\t~a" name contents)
+                 (unless (null? reacts)
+                   (display "\t[")
+                   (for-each (match-lambda
+                               ((char . whos)
+                                (format #t " ~ax~a" char (length whos))))
+                             reacts)
+                   (display " ]"))
+                 (newline))))))))
+      messages)
      (newline))))
 
 (define (render-chats)
