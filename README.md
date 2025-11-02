@@ -69,24 +69,24 @@ described in [Martin Kleppmann's "Making CRDTs Byzantine Fault
 Tolerant"](https://dl.acm.org/doi/10.1145/3517209.3524042).  SHA-256
 was chosen for the hash function and ed25519 for signatures.
 
-**(Note: this paragraph is still TODO)** Certificate capabilities are
-used for a limited, presentation-only form of access control within
-the chat log CRDTs.  The initiator of the chat room has the privilege
-of being the root signer for all certificates used in the chat room.
-These certificates *do not* prevent valid CRDT events for invalid chat
-room operations (according to the certificate policy) from being
-written to the chat event log because there is no central hub from
-which to enforce such a policy.  Instead, they specify the rules by
-which well-behaved clients should *interpret* the events that have
-occurred.  For example, Bob can commit an event that edits the
-contents of Carol's post, but if the certificate Bob used for that
-operation does not grant the capability to edit posts authored by
-Carol then that edit will not be made user-visible (and the presence
-of such an event in the log could be surfaced by the application and
-lead to Bob being removed from the group).  When a node becomes aware
-of a new certificate, it must reinterpret the chat log with the
-current set of policies in order to render the most correct view to
-the user according to the information available on the local replica.
+Certificate capabilities are used for a limited, presentation-only
+form of access control within the chat log CRDTs.  The initiator of
+the chat room has the privilege of being the root signer for all
+certificates used in the chat room.  These certificates *do not*
+prevent valid CRDT events for invalid chat room operations (according
+to the certificate policy) from being written to the chat event log
+because there is no central hub from which to enforce such a policy.
+Instead, they specify the rules by which well-behaved clients should
+*interpret* the events that have occurred.  For example, Bob can
+commit an event that edits the contents of Carol's post, but if the
+certificate Bob used for that operation does not grant the capability
+to edit posts authored by Carol then that edit will not be made
+user-visible (and the presence of such an event in the log could be
+surfaced by the application and lead to Bob being removed from the
+group).  When a node becomes aware of a new certificate, it must
+reinterpret the chat log with the current set of policies in order to
+render the most correct view to the user according to the information
+available on the local replica.
 
 Putting object capabilities and certificate capabilities together, we
 can re-examine the case of Mallet being in the chat room.  To remove
