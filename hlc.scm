@@ -27,7 +27,9 @@
 (define-module (hlc)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-9)
-  #:export (<clock>
+  #:export (current-time/ms
+
+            <clock>
             %make-clock
             make-clock
             clock?
@@ -40,17 +42,22 @@
             clock-compare-partial
             clock<?))
 
+(define (current-time/ms)
+  (match (gettimeofday)
+    ((sec . usec)
+     (+ (* sec 1000) (floor/ usec 1000)))))
+
 (define-record-type <clock>
   (%make-clock real logical id)
   clock?
-  (real clock-real)       ; int
-  (logical clock-logical) ; int
+  (real clock-real)                     ; int
+  (logical clock-logical)               ; int
   (id clock-id))          ; string
 
 (define (make-clock id)
-  (%make-clock (current-time) 0 id))
+  (%make-clock (current-time/ms) 0 id))
 
-(define* (clock-tick clock #:optional (now (current-time)))
+(define* (clock-tick clock #:optional (now (current-time/ms)))
   (match clock
     (($ <clock> real logical id)
      ;; The real time component can never go backwards, even if the
@@ -59,7 +66,7 @@
          (%make-clock now 0 id)
          (%make-clock real (1+ logical) id)))))
 
-(define* (clock-join clock other #:optional (now (current-time)))
+(define* (clock-join clock other #:optional (now (current-time/ms)))
   (match-let ((($ <clock> real logical id) clock)
               (($ <clock> real* logical* _) other))
     (cond

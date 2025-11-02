@@ -243,7 +243,7 @@
            ;; Byzantine Mallet cannot send Alice and Bob different
            ;; events with the same ID.  One or both will not hash
            ;; properly and the invalid events will be rejected.
-           (id (sha256 (encode (list timestamp parents blob))))
+           (event-id (sha256 (encode (list timestamp parents blob))))
            ;; The signature incorporates the blob and the parent event
            ;; IDs.  Mallet cannot replay Alice's message in a new
            ;; event.  The parent events will have to be different due
@@ -251,10 +251,11 @@
            ;; the signature, Mallet cannot reuse one of Alice's
            ;; previous signatures.
            (signature (sign (encode (list parents blob)) private-key))
-           (event (make-event id parents timestamp public-key signature blob)))
+           (event (make-event event-id parents timestamp public-key signature blob)))
       (: clock timestamp)
       (append! event)
-      (update! id timestamp public-key exp)
+      (update! event-id timestamp public-key exp)
       ;; The log branches are now merged into one.
-      (: heads (list (event-id event)))
-      (sync-all!)))))
+      (: heads (list event-id))
+      (sync-all!)
+      event-id))))
