@@ -103,13 +103,8 @@
   (for-each
    (match-lambda
      ((id author cert-id created-at modified-at deleted-at contents reacts)
-      (let ((name (hashmap-ref names author "?????"))
-            (reacts (sort
-                     (hashmap-fold (lambda (char whos reacts)
-                                     (cons (cons char whos) reacts))
-                                   '() reacts)
-                     (lambda (a b)
-                       (char<? (car a) (car b))))))
+      (let ((name (or (assoc-ref names author) "?????"))
+            (reacts (sort reacts (lambda (a b) (char<? (car a) (car b))))))
         (cond
          (deleted-at
           (format #t "<~a>\t--- deleted ---\n" name))
@@ -187,7 +182,7 @@
      (match-lambda
        ((id author cert-id created-at modified-at deleted-at contents reacts)
         (cond
-         ((and (equal? (hashmap-ref names author) "Bob")
+         ((and (equal? (assoc-ref names author) "Bob")
                (equal? contents "Hey, Alice!"))
           ;; Alice reacts to Bob's greeting.
           (<-np chat-alice 'react cert-alice id created-at #\🌊)))))
@@ -199,21 +194,21 @@
      (match-lambda
        ((id author cert-id created-at modified-at deleted-at contents reacts)
         (cond
-         ((and (equal? (hashmap-ref names author) "Alice")
+         ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "Hello"))
           ;; Bob reacts to Carol's greeting.
           (<-np chat-bob 'react cert-bob id created-at #\👋)
           ;; Bob cannot edit Carol's message.
           (<-np chat-bob 'edit cert-bob id created-at "owo"))
-         ((and (equal? (hashmap-ref names author) "Bob")
+         ((and (equal? (assoc-ref names author) "Bob")
                (equal? contents "asdf"))
           ;; Bob deletes his cat's post.
           (<-np chat-bob 'delete cert-bob id created-at))
-         ((and (equal? (hashmap-ref names author) "Alice")
+         ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "This is a neat chat demo!"))
           ;; Bob agrees that this demo is neat.
           (<-np chat-bob 'react cert-bob id created-at #\💯))
-         ((and (equal? (hashmap-ref names author) "Carol")
+         ((and (equal? (assoc-ref names author) "Carol")
                (equal? contents "Yeah, it's so grood."))
           ;; Bob cannot delete Carol's message.
           (<-np chat-bob 'delete cert-bob id created-at)))))
@@ -225,17 +220,17 @@
      (match-lambda
        ((id author cert-id created-at modified-at deleted-at contents reacts)
         (cond
-         ((and (equal? (hashmap-ref names author) "Alice")
+         ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "Hello"))
           ;; Carol reacts to Alice's greeting.
           (<-np chat-carol 'react cert-carol id created-at #\👋))
-         ((and (equal? (hashmap-ref names author) "Alice")
+         ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "This is a neat chat demo!"))
           ;; Carol accidentally reacts with a thumbs down emoji and
           ;; quickly unreacts.
           (<-np chat-carol 'react cert-carol id created-at #\👎)
           (<-np chat-carol 'unreact cert-carol id created-at #\👎))
-         ((and (equal? (hashmap-ref names author) "Carol")
+         ((and (equal? (assoc-ref names author) "Carol")
                (equal? contents "Yeah, it's so grood."))
           ;; Carol edits her previous message to fix a typo.
           (<-np chat-carol 'edit cert-carol id created-at "Yeah, it's so good!")))))

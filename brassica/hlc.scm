@@ -43,9 +43,13 @@
             clock>?))
 
 (define (current-time/ms)
-  (match (gettimeofday)
-    ((sec . usec)
-     (+ (* sec 1000) (floor/ usec 1000)))))
+  (cond-expand
+   (guile
+    (match (gettimeofday)
+      ((sec . usec)
+       (+ (* sec 1000) (floor/ usec 1000)))))
+   (hoot
+    (* (current-time) 1000))))
 
 (define-record-type <clock>
   (%make-clock real logical id)

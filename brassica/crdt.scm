@@ -148,7 +148,7 @@
   (define (valid? event)
     (match event
       (($ <event> event-id parents timestamp public-key signature blob)
-       (and (bytevector=? event-id (sha256 (encode (list timestamp parents blob))))
+       (and (equal? event-id (sha256 (encode (list timestamp parents blob))))
             (verify (captp-signature->crypto-signature signature)
                     (encode (list parents blob))
                     ;; TODO: Canonicalize keys so we don't construct
@@ -186,6 +186,9 @@
       (sync! new (: heads))))
    ;; Query to see if any of the given events *or* their
    ;; predecessors are missing.
+   ;;
+   ;; TODO: This is not an optimized sync algorithm by any means.
+   ;; Something that incorporates a bloom filter would be nice.
    ((missing event-ids)
     (hashmap-fold
      (lambda (event-id event memo) (cons event-id memo))

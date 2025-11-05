@@ -289,8 +289,8 @@
      (lambda (who profile memo)
        (match profile
          (($ <profile> _ spn)
-          (hashmap-set memo who (lww-register-value spn)))))
-     (make-hashmap) profiles))
+          (alist-cons who (lww-register-value spn) memo))))
+     '() profiles))
   (define (effect id timestamp who exp profiles)
     (match exp
       (('set-spn name)
@@ -400,7 +400,7 @@
   (define proxy (spawn ^revokable))
   (list proxy (spawn ^revoker)))
 
-(define-actor (^chat-room become id root-signer #:optional (period (* 30 60)))
+(define-actor (^chat-room become id root-signer #:optional (period (* 30 60 1000)))
   (define (^partition-replica become replica key)
     (methods
      ((replica-id) (<- replica 'replica-id))
@@ -479,18 +479,18 @@
                (allowed? cert-id 'delete author who)))
             deletes))
     (define (reactions author reacts)
-      (fold (lambda (react reacts)
+      (fold (lambda (react memo)
               (match react
                 ((who cert-id when char reacted?)
                  (if (allowed? cert-id 'react author who)
-                     (let ((whos (hashmap-ref reacts char '())))
+                     (let ((whos (hashmap-ref memo char '())))
                        (if reacted?
-                           (hashmap-set reacts char
+                           (hashmap-set memo char
                                         (lset-adjoin equal? whos who))
                            (match (delete who whos)
-                             (() (hashmap-remove reacts char))
-                             (whos (hashmap-set reacts char whos)))))
-                     reacts))))
+                             (() (hashmap-remove memo char))
+                             (whos (hashmap-set memo char whos)))))
+                     memo))))
             (make-hashvmap) reacts))
     (fold-right
      (lambda (msg memo)
@@ -516,12 +516,14 @@
                                    (#f contents)
                                    ((_ _ _ contents) contents)))
                             ;; Emoji reactions.
-                            (reactions author reacts))
+                            (hashmap-fold alist-cons '()
+                                          (reactions author reacts)))
                       memo))
               memo))))
      '() messages))
   (methods
    ((replica-id) replica-id)
+   ((root-signer) root-signer)
    ;; Spawn a revokable proxy to our replica that we can share with
    ;; someone else.
    ((fresh-replica)
