@@ -5,6 +5,7 @@
     --brassica-foreground-color: #f0f6f0;
     --brassica-highlight-color: #f2eb7c;
     --brassica-accent-color: #ff4adc;
+    --brassica-username-color: #70b9fb;
 }
 
 html {
@@ -209,6 +210,30 @@ form fieldset label {
     flex-grow: 1;
     margin: 0.5rem;
     overflow: scroll;
+}
+
+.message-block {
+    margin-bottom: 0.5rem;
+    padding: 0;
+}
+
+.message-block header {
+    margin-bottom: 0.5rem;
+}
+
+.message-block cite {
+    color: var(--brassica-username-color);
+    font-weight: bold;
+    font-style: normal;
+    font-size: 1.25rem;
+}
+
+.message-block p {
+    margin-bottom: 0.25rem;
+}
+
+.message-block p:hover {
+    background-color: var(--brassica-background-secondary-color);
 }
 
 .room-compose {

@@ -27,6 +27,7 @@
   #:use-module ((goblins) #:select (($ . :)))
   #:use-module (goblins actor-lib cell)
   #:use-module (goblins actor-lib methods)
+  #:use-module (goblins actor-lib pubsub)
   #:use-module (goblins contrib base64)
   #:use-module (goblins contrib syrup)
   #:use-module (goblins utils crypto)
@@ -247,9 +248,15 @@
    ((public-key) public-key)
    ((sign data) (sign data private-key))))
 
+(define-syntax-rule (effect+publish effect pubsub arg ...)
+  (lambda (id timestamp who exp prev)
+    (let ((result (effect id timestamp who exp prev)))
+      (: pubsub 'publish arg ...)
+      result)))
+
 ;; The certificates CRDT accumulates a set of certificate
 ;; capabilities.
-(define-actor (^certificates become replica-id root-signer private-key)
+(define-actor (^certificates become replica-id root-signer private-key pubsub)
   (define (effect id timestamp who exp certificates)
     (match exp
       (('add-certificate parent-id controllers pred)
@@ -271,7 +278,7 @@
   (define crdt
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
-           #:effect effect))
+           #:effect (effect+publish effect pubsub 'updated-certificates)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((ref) (: crdt 'ref))
@@ -283,7 +290,7 @@
     (: crdt 'commit `(revoke-certificate ,cert-id)))))
 
 ;; The profiles CRDT accumulates user metadata.
-(define-actor (^profiles become replica-id private-key)
+(define-actor (^profiles become replica-id private-key pubsub)
   (define (query profiles)
     (hashmap-fold
      (lambda (who profile memo)
@@ -306,7 +313,7 @@
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
-           #:effect effect))
+           #:effect (effect+publish effect pubsub 'updated-profiles)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((ref) (: crdt 'ref))
@@ -315,7 +322,7 @@
    ((set-spn name) (: crdt 'commit `(set-spn ,name)))))
 
 ;; A chat log holds one chunk of a chat room's history.
-(define-actor (^chat-log become replica-id private-key)
+(define-actor (^chat-log become replica-id private-key pubsub)
   (define (query messages)
     (map (match-lambda
            (($ <message> id timestamp author cert-id created-at contents
@@ -368,7 +375,7 @@
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
-           #:effect effect))
+           #:effect (effect+publish effect pubsub 'updated-messages)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((ref) (: crdt 'ref))
@@ -438,8 +445,10 @@
   (define replica-id (base64-encode (strong-random-bytes 32) #:padding? #f))
   ;; Our replica interface.
   (define replica (spawn ^chat-room-replica))
-  (define certificates (spawn ^certificates replica-id root-signer private-key))
-  (define profiles (spawn ^profiles replica-id private-key))
+  (define pubsub (spawn ^pubsub))
+  (define certificates
+    (spawn ^certificates replica-id root-signer private-key pubsub))
+  (define profiles (spawn ^profiles replica-id private-key pubsub))
   ;; Tell the group our self-proposed name.
   (: profiles 'set-spn spn)
   (define replicas (spawn ^cell '()))
@@ -452,7 +461,7 @@
   (define partitions (spawn ^cell (make-hashvmap)))
   (define (partition-ref key)
     (or (hashmap-ref (: partitions) key)
-        (let ((log (spawn ^chat-log replica-id private-key)))
+        (let ((log (spawn ^chat-log replica-id private-key pubsub)))
           (: partitions (hashmap-set (: partitions) key log))
           (for-each
            (lambda (replica)
@@ -524,6 +533,8 @@
   (methods
    ((replica-id) replica-id)
    ((root-signer) root-signer)
+   ((subscribe subscriber) (: pubsub 'subscribe subscriber))
+   ((unsubscribe subscriber) (: pubsub 'unsubscribe subscriber))
    ;; Spawn a revokable proxy to our replica that we can share with
    ;; someone else.
    ((fresh-replica)

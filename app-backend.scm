@@ -70,6 +70,12 @@
        (: room 'add-replica their-replica)
        our-replica)))))
 
+(define-actor (^notifier become proc)
+  (lambda args
+    (syscaller-free-fiber
+     (lambda () (apply proc args)))
+    #t))
+
 (lambda ()
   (define vat (spawn-vat))
   (define netlayer (with-vat vat (spawn ^websocket-netlayer)))
@@ -80,14 +86,13 @@
         (with-vat* vat (apply <- obj args))
         (with-vat vat (apply : obj args))))
    ((make-identity spn)
-    (with-vat vat
-      (spawn ^identity spn)))
+    (with-vat vat (spawn ^identity spn)))
    ((make-room id root-signer)
-    (with-vat vat
-      (spawn ^chat-room id root-signer)))
+    (with-vat vat (spawn ^chat-room id root-signer)))
    ((make-invite name room parent-cert-id)
-    (with-vat vat
-      (spawn ^invite name room parent-cert-id)))
+    (with-vat vat (spawn ^invite name room parent-cert-id)))
+   ((make-notifier proc)
+    (with-vat vat (spawn ^notifier proc)))
    ((connect-to-relay uri)
     (with-vat vat
       (define relay
