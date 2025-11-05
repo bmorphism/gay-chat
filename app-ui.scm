@@ -131,51 +131,70 @@ relay.")
     (set-inner-shtml!
      (get-element-by-id "aux-pane")
      `((article
+        (@ (class "room-list"))
         ,(match rooms
            (()
             '(section
               (p "No chat rooms available! 😭")
               (p "Create a join or a room with the buttons below!")))
            (_
-            `(ul (@ (class "room-list"))
-                 ,@(map (lambda (room)
-                          `(li (@ (class ,(if (eq? room current-room)
-                                              "current-room"
-                                              "room-name")))
-                               (a (@ (href "#")
-                                     (click ,(make-switcher room)))
-                                  ,(room-name room))))
-                        rooms)))))
+            `(ul
+              ,@(map (lambda (room)
+                       `(li (@ (class ,(if (eq? room current-room)
+                                           "current-room"
+                                           "room-name")))
+                            (a (@ (href "#")
+                                  (click ,(make-switcher room)))
+                               ,(room-name room))))
+                     rooms)))))
        (article (@ (class "room-list-buttons"))
                 (button (@ (click ,start-create-room)) "Create room")
                 (button (@ (click ,start-join-room)) "Join room")))))
-  (define (render-message msg)
-    (match msg
-      ((id author cert-id created-at modified-at deleted-at contents reacts)
-       (let ((reacts (sort reacts (lambda (a b) (char<? (car a) (car b))))))
-         (cond
-          (deleted-at
-           `(p (em "messaged deleted")))
-          (else
-           `(p ,contents
-               ;; (ul (li (button "edit"))
-               ;;     (li (button "delete")))
-               ;; ,@(match reacts
-               ;;     (() '())
-               ;;     (reacts
-               ;;      `((ul
-               ;;         ,@(map (match-lambda
-               ;;                  ((char . whos)
-               ;;                   `(li ,(format #t " ~ax~a" char (length whos)))))
-               ;;                reacts)))))
-               )))))))
-  (define (render-message-block messages names)
+  (define (render-message-block room messages names)
+    ;; TODO: Handle message markup.
+    (define (render-message-contents contents)
+      contents)
+    (define (render-message message)
+      (match message
+        ((msg-id author cert-id created-at modified-at deleted-at contents reacts)
+         (define (reaction char)
+           (lambda (event)
+             (prevent-default! event)
+             (*backend* 'send (room-actor room)
+                        'react (room-certificate-id room) msg-id created-at char)
+             (refresh-room-log room)))
+         (define (react-button char)
+           `(a (@ (href "#")
+                  (click ,(reaction char)))
+               ,(string char)))
+         (let ((reacts (sort reacts (lambda (a b) (char<? (car a) (car b))))))
+           `(li (@ (class "message"))
+                ,@(cond
+                   (deleted-at
+                    `((p (@ (class "deleted")) "message deleted")))
+                   (else
+                    `((p ,(render-message-contents contents))
+                      (aside (@ (class "message-toolbar"))
+                             ,(react-button #\👍)
+                             ,(react-button #\😂)
+                             ,(react-button #\👀))
+                      ,@(match reacts
+                          (() '())
+                          (reacts
+                           `((ul (@ (class "reactions"))
+                                 ,@(map (match-lambda
+                                          ((char . whos)
+                                           `(li ,(string char)
+                                                " "
+                                                ,(length whos))))
+                                        reacts)))))))))))))
     (match messages
       (((_ author . _) . _)
        `(section (@ (class "message-block"))
                  (header
                   (cite ,(or (assoc-ref names author) "<unknown>")))
-                 ,@(map render-message messages)))))
+                 (blockquote
+                  (ol ,@(map render-message messages)))))))
   (define (get-all-messages room)
     (*backend* 'send (room-actor room) 'all-messages))
   (define (chunkify pred lst)
@@ -200,8 +219,8 @@ relay.")
            (names (*backend* 'send actor 'profiles)))
       (set-inner-shtml!
        (get-element-by-id "room-log")
-       (map (lambda (msg)
-              (render-message-block msg names))
+       (map (lambda (chunk)
+              (render-message-block room chunk names))
             (chunkify (lambda (a b)
                         (match-let (((_ author-a . _) a)
                                     ((_ author-b . _) b))

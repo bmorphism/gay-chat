@@ -65,7 +65,7 @@ input, textarea {
     /* border-radius: 0.25rem; */
     margin: 0;
     padding: 0.5rem;
-    font-size: 100%;
+    font-size: 1rem;
 }
 
 input:focus, textarea:focus {
@@ -161,6 +161,10 @@ form fieldset label {
 }
 
 .room-list {
+    padding: 0;
+}
+
+.room-list ul {
     list-style-type: none;
     padding: 0;
 }
@@ -228,11 +232,58 @@ form fieldset label {
     font-size: 1.25rem;
 }
 
+.message-block ol {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+}
+
+.message-block ol li {
+    position: relative;
+}
+
+.message-block ol li:hover {
+    background-color: var(--brassica-background-secondary-color);
+}
+
+.message-block blockquote {
+    margin: 0;
+    padding: 0.5rem;
+    border-left: 0.25rem solid var(--brassica-background-secondary-color);
+}
+
 .message-block p {
     margin-bottom: 0.25rem;
 }
 
-.message-block p:hover {
+.message-toolbar {
+    display: none;
+}
+
+.message-block ol li:hover .message-toolbar {
+    display: block;
+    position: absolute;
+    top: 0;
+    right: 0;
+}
+
+.deleted {
+    font-style: italic;
+    color: #555;
+}
+
+.reactions {
+    display: flex;
+    flex-direction: row;
+}
+
+.reactions {
+    list-style-type: none;
+    padding: 0;
+}
+
+.reactions li {
+    margin: 0.25rem;
     background-color: var(--brassica-background-secondary-color);
 }
 
