@@ -22,6 +22,7 @@
   #:use-module (hoot ffi)
   #:export (add-event-listener!
             remove-event-listener!
+            event-target
             prevent-default!
             keyboard-event-key))
 
@@ -34,6 +35,9 @@
   (ref extern) (ref string) (ref extern) -> none)
 
 ;; Event
+(define-foreign event-target
+  "event" "target"
+  (ref extern) -> (ref extern))
 (define-foreign prevent-default!
   "event" "preventDefault"
   (ref extern) -> none)

@@ -27,6 +27,7 @@
   #:export (remove-all-children!
             replace-children!
             set-inner-shtml!
+            set-outer-shtml!
             shtml->dom))
 
 (define (remove-all-children! elem)
@@ -50,8 +51,11 @@
                  (append-child! container (shtml->dom shtml)))
                shtml))))
 
-(define (shtml->dom exp)
-  (match exp
+(define (set-outer-shtml! elem shtml)
+  (replace-with! elem (shtml->dom shtml)))
+
+(define (shtml->dom shtml)
+  (match shtml
     ;; The simple case: a string representing a text node.
     ((? string? str)
      (make-text-node str))
@@ -64,11 +68,11 @@
        (define (add-children children)
          ;; Recursively call shtml->dom for each child node and
          ;; append it to elem.
-         (for-each
-          (lambda (child)
-            (append-child! elem (shtml->dom child)))
-          children))
+         (for-each (lambda (child)
+                     (append-child! elem (shtml->dom child)))
+                   children))
        (match body
+         (() (values))
          ((('@ . attrs) . children)
           (for-each
            (lambda (attr)

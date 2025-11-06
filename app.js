@@ -54,11 +54,13 @@ const wasmOpts = {
       removeAttribute: (elem, name) => elem.removeAttribute(name),
       remove: (elem) => elem.remove(),
       replaceWith: (oldElem, newElem) => oldElem.replaceWith(newElem),
-      clone: (elem) => elem.cloneNode()
+      clone: (elem) => elem.cloneNode(),
+      focus: (elem) => elem.focus()
     },
     event: {
       addEventListener: (target, type, listener) => target.addEventListener(type, listener),
       removeEventListener: (target, type, listener) => target.removeEventListener(type, listener),
+      target: (event) => event.target,
       preventDefault: (event) => event.preventDefault(),
       keyboardKey: (event) => event.key
     },

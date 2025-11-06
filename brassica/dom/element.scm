@@ -33,7 +33,8 @@
             replace-with!
             set-attribute!
             remove-attribute!
-            clone-element))
+            clone-element
+            focus!))
 
 (define-foreign element-value
   "element" "value"
@@ -77,3 +78,6 @@
 (define-foreign clone-element
   "element" "clone"
   (ref extern) -> (ref extern))
+(define-foreign focus!
+  "element" "focus"
+  (ref extern) -> none)

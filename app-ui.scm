@@ -20,7 +20,8 @@
   (name room-name)
   (actor room-actor)
   (certificate-id room-certificate-id)
-  (connections room-connections set-room-connections!))
+  (connections room-connections set-room-connections!)
+  (editing room-editing set-room-editing!))
 
 (define (add-room-connection! room connection)
   (set-room-connections! room (cons connection (room-connections room))))
@@ -75,7 +76,7 @@ relay.")
     (set! current-room #f)
     (set-inner-shtml!
      (get-element-by-id "context-header")
-     `(span (@ (class "room-title")) "Create room"))
+     `(nav (span (@ (class "room-title")) "Create room")))
     (set-inner-shtml!
      (get-element-by-id "main-pane")
      `(article
@@ -98,7 +99,7 @@ relay.")
     (set! current-room #f)
     (set-inner-shtml!
      (get-element-by-id "context-header")
-     `(span (@ (class "room-title")) "Join room"))
+     `(nav (span (@ (class "room-title")) "Join room")))
     (set-inner-shtml!
      (get-element-by-id "main-pane")
      `(article
@@ -154,6 +155,8 @@ relay.")
     ;; TODO: Handle message markup.
     (define (render-message-contents contents)
       contents)
+    (define (stringify-message-contents contents)
+      contents)
     (define (render-message message)
       (match message
         ((msg-id author cert-id created-at modified-at deleted-at contents reacts)
@@ -167,21 +170,63 @@ relay.")
            `(a (@ (href "#")
                   (click ,(reaction char)))
                ,(string char)))
+         (define (start-edit-message event)
+           (prevent-default! event)
+           (set-room-editing! room msg-id)
+           (refresh-room-log room)
+           (let ((textarea (get-element-by-id "message-editing")))
+             (focus! textarea)
+             (set-element-value! textarea
+                                 (stringify-message-contents contents))))
+         (define (finish-edit-message event)
+           (let ((target (event-target event)))
+             (match (keyboard-event-key event)
+               ("Enter"
+                (let ((contents (element-value target)))
+                  (prevent-default! event)
+                  (unless (string-null? contents)
+                    (*backend* 'send (room-actor room) 'edit
+                               (room-certificate-id room)
+                               msg-id created-at
+                               contents)
+                    (set-room-editing! room #f)
+                    ;; TODO: Just refresh this one message.
+                    (refresh-room-log room))))
+               ("Escape"
+                (set-room-editing! room #f)
+                (set-outer-shtml!
+                 target
+                 `(p ,(render-message-contents contents))))
+               (_ (values)))))
+         (define (remove-message event)
+           (prevent-default! event)
+           (*backend* 'send (room-actor room)
+                      'delete (room-certificate-id room) msg-id created-at)
+           (refresh-room-log room))
          (let ((reacts (sort reacts (lambda (a b) (char<? (car a) (car b))))))
            `(li (@ (class "message"))
                 ,@(cond
                    (deleted-at
-                    `((p (@ (class "deleted")) "message deleted")))
+                    `((p (@ (class "message-removed")) "message removed")))
                    (else
-                    `((p ,(render-message-contents contents))
+                    `(,(if (equal? msg-id (room-editing room))
+                           `(textarea (@ (id "message-editing")
+                                         (keydown ,finish-edit-message)))
+                           `(p ,(render-message-contents contents)))
+                      ,@(if modified-at
+                            '((p (small (em "(edited)"))))
+                            '())
                       (aside (@ (class "message-toolbar"))
+                             ,(react-button #\👋)
                              ,(react-button #\👍)
-                             ,(react-button #\😂)
-                             ,(react-button #\👀))
+                             ,(react-button #\🙂)
+                             ,(react-button #\👀)
+                             (a (@ (href "#") (click ,start-edit-message)) "edit")
+                             (a (@ (href "#") (click ,remove-message)) "remove"))
                       ,@(match reacts
                           (() '())
                           (reacts
-                           `((ul (@ (class "reactions"))
+                           `((ul (@ (class "message-reactions"))
                                  ,@(map (match-lambda
                                           ((char . whos)
                                            `(li ,(string char)
@@ -193,8 +238,7 @@ relay.")
        `(section (@ (class "message-block"))
                  (header
                   (cite ,(or (assoc-ref names author) "<unknown>")))
-                 (blockquote
-                  (ol ,@(map render-message messages)))))))
+                 (ol ,@(map render-message messages))))))
   (define (get-all-messages room)
     (*backend* 'send (room-actor room) 'all-messages))
   (define (chunkify pred lst)
@@ -279,8 +323,9 @@ relay.")
       (prevent-default! event)
       (set-inner-shtml!
        (get-element-by-id "context-header")
-       `(span (@ (class "room-title"))
-              "Settings: ",(room-name room)))
+       `(nav
+         (span (@ (class "room-title"))
+               "Settings: ",(room-name room))))
       (set-inner-shtml!
        (get-element-by-id "main-pane")
        `(article
@@ -308,7 +353,8 @@ relay.")
       (refresh-room-list))
     (set-inner-shtml!
      (get-element-by-id "context-header")
-     `((span (@ (class "room-title")) ,(room-name room))
+     `(nav
+       (span (@ (class "room-title")) ,(room-name room))
        (a (@ (class "room-settings")
              (href "#")
              (click ,open-room-settings))
@@ -318,9 +364,10 @@ relay.")
    (document-body)
    `(main (@ (class "chat-container"))
           (div (@ (id "profile"))
-               (a (@ (class "profile-icon")
-                     (href "#"))
-                  ,(string (char-upcase (string-ref our-name 0)))))
+               (nav
+                (a (@ (class "profile-icon")
+                      (href "#"))
+                   ,(string (char-upcase (string-ref our-name 0))))))
           (div (@ (id "context-header")))
           (div (@ (id "aux-pane")))
           (div (@ (id "main-pane")))))
