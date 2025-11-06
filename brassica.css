@@ -230,7 +230,6 @@ form fieldset label {
     color: var(--brassica-username-color);
     font-weight: bold;
     font-style: normal;
-    font-size: 1.25rem;
 }
 
 .message-block ol {

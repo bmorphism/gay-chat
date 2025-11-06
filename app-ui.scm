@@ -136,7 +136,7 @@ relay.")
         ,(match rooms
            (()
             '(section
-              (p "No chat rooms available! 😭")
+              (p "No chat rooms available! 🙁")
               (p "Create a join or a room with the buttons below!")))
            (_
             `(ul
@@ -299,12 +299,27 @@ relay.")
             (add-room-connection! room connection)
             (set-element-value! name-elem "")
             (refresh-connections)))))
+    (define (add-connection event)
+      (prevent-default! event)
+      (let* ((connection-name (value-for-id "add-connection-name"))
+             (sturdyref (value-for-id "add-connection-sturdyref"))
+             (invite (*backend* 'enliven sturdyref)))
+        (match (*backend* 'send invite 'redeem (*backend* 'send id 'public-key))
+          ((name root-signer cert-id connector)
+           (let* ((actor (*backend* 'make-room id root-signer))
+                  (our-replica (car (*backend* 'send actor 'fresh-replica)))
+                  (their-replica (*backend* 'send connector 'connect our-replica))
+                  (connection (make-connection connection-name 'connected
+                                               our-replica)))
+             (*backend* 'send actor 'add-replica their-replica)
+             (add-room-connection! room connection)
+             (refresh-connections))))))
     (define (refresh-connections)
       (set-inner-shtml!
        (get-element-by-id "room-connections")
        (match (room-connections room)
          (()
-          '((p "No connections! 😭")
+          '((p "No connections! 🙁")
             (p "Invite someone below.")))
          (connections
           `(table
@@ -329,13 +344,22 @@ relay.")
       (set-inner-shtml!
        (get-element-by-id "main-pane")
        `(article
-         (header (h2 "Connections"))
+         (h3 "Connections")
          (section (@ (id "room-connections")))
          (section
           (h3 "Invite someone")
+          (p "Generate an invite to this room.")
           (form (@ (submit ,create-invite))
                 (fieldset
                  (label "Name" (input (@ (id "invite-name")))))
+                (button (@ (type "submit")) "Invite")))
+         (section
+          (h3 "Add connection")
+          (p "Sync up with another user.")
+          (form (@ (submit ,add-connection))
+                (fieldset
+                 (label "Name" (input (@ (id "add-connection-name"))))
+                 (label "Invite URI" (input (@ (id "add-connection-sturdyref")))))
                 (button (@ (type "submit")) "Invite")))))
       (refresh-connections))
     (define (open-room-log)
