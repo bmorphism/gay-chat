@@ -238,12 +238,12 @@ form fieldset label {
     padding: 0;
 }
 
-.message-block ol li {
+.message-block ol > li {
     position: relative;
     padding: 0.25rem;
 }
 
-.message-block ol li:hover {
+.message-block ol > li:hover {
     background-color: var(--brassica-background-secondary-color);
 }
 
@@ -255,7 +255,7 @@ form fieldset label {
     display: none;
 }
 
-.message-block ol li:hover .message-toolbar {
+.message-block ol > li:hover .message-toolbar {
     display: flex;
     flex-direction: row;
     gap: 0.5rem;
@@ -289,6 +289,13 @@ form fieldset label {
 .message-reactions li {
     padding: 0.5rem;
     border: 1px solid var(--brassica-background-secondary-color);
+    cursor: pointer;
+}
+
+.message-reactions li.our-reaction {
+    padding: 0.5rem;
+    border: 1px solid var(--brassica-background-secondary-color);
+    background-color: var(--brassica-background-secondary-color);
 }
 
 .room-compose {
