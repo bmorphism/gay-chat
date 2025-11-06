@@ -4,6 +4,18 @@ This is an experimental prototype for a p2p, eventually consistent,
 "good enough" chat application built with
 [Goblins](https://spritely.institute/goblins).
 
+## Try
+
+Get the dependencies by running `guix shell -m manifest.scm`.
+
+Run `make demo` to run the simulated chat test in your terminal.
+
+To try the web interface, run `make server`.  Copy a sturdyref for
+Alice, Bob, or Carol and visit http://localhost:8088.
+
+Note that these demos *do not* currently save their state.  This is
+just a prototype and all chat rooms are ephemeral.
+
 ## Technical overview
 
 Chat rooms are implemented using operation-based
@@ -147,9 +159,3 @@ bandwidth, memory, nor disk space usage.
 
 * Rotation of user identity keys.  We deliberately left this out to
   keep the scope of this experiment manageable.
-
-## Try
-
-Get the dependencies by running `guix shell -m manifest.scm`.
-
-Run `make demo` to run the simulated chat test.
