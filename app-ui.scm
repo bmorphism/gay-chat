@@ -156,7 +156,7 @@ relay.")
                 (button (@ (click ,start-create-room)) "Create room")
                 (button (@ (click ,start-join-room)) "Join room")))))
   (define (message-element-id msg-id)
-    (string-append "message-" (base64-encode msg-id)))
+    (string-append "message-" (base64-encode msg-id #:padding? #f)))
   (define (render-message room message)
     ;; TODO: Handle message markup.
     (define (render-message-contents contents)
