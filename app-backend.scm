@@ -1,4 +1,5 @@
 (use-modules (brassica chat)
+             (brassica relay)
              (fibers)
              (fibers channels)
              (fibers operations)
@@ -95,10 +96,10 @@
     (with-vat vat (spawn ^notifier proc)))
    ((connect-to-relay uri)
     (with-vat vat
-      (define relay
-        (fetch-and-spawn-prelay-netlayer (string->ocapn-id uri)
-                                         #:netlayer netlayer
-                                         #:mycapn mycapn))
+      (define hub (<- mycapn 'enliven (string->ocapn-id uri)))
+      ;; TODO: Save registered device to re-use.
+      (define device (<- hub 'register))
+      (define relay (connect-device device mycapn))
       (: mycapn 'install-netlayer relay)
       #t))
    ((make-sturdyref obj)

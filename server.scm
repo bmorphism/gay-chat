@@ -12,7 +12,8 @@
 ;;; See the License for the specific language governing permissions and
 ;;; limitations under the License.
 
-(use-modules (fibers)
+(use-modules (brassica relay)
+             (fibers)
              (fibers conditions)
              ((goblins) #:hide ($))
              ((goblins) #:select (($ . :)))
@@ -21,8 +22,6 @@
              (goblins ocapn ids)
              (goblins ocapn captp)
              (goblins ocapn netlayer websocket)
-             (goblins ocapn netlayer prelay)
-             (goblins ocapn netlayer prelay-utils)
              (goblins actor-lib facet)
              (goblins actor-lib joiners)
              (goblins actor-lib methods)
@@ -34,11 +33,6 @@
 
 (define vat (spawn-vat))
 
-(define-actor (^register-facet become mycapn netlayer-name)
-  (methods
-   ((register obj)
-    (<- mycapn 'register obj netlayer-name))))
-
 (with-vat vat
   (define netlayer
     (spawn ^websocket-netlayer
@@ -47,16 +41,11 @@
            #:port 8889
            #:verify-certificates? #f
            #:encrypted? #f))
-
   (define mycapn (spawn-mycapn netlayer))
-
-  (define prelay-admin
-    (spawn ^prelay-admin
-           (spawn ^facet mycapn 'enliven)
-           (spawn ^register-facet mycapn (: netlayer 'netlayer-name))))
+  (define relay-admin (spawn ^relay-admin mycapn netlayer))
 
   (define (fresh-account)
-    (<- prelay-admin 'add-account (strong-random-bytes 10)))
+    (<- relay-admin 'add-account))
 
   (define users '("Alice" "Bob" "Carol"))
 
