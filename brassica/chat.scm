@@ -252,7 +252,7 @@
 (define-syntax-rule (effect+publish effect pubsub arg ...)
   (lambda (id timestamp who exp prev)
     (let ((result (effect id timestamp who exp prev)))
-      (: pubsub 'publish arg ...)
+      (<-np pubsub 'publish arg ...)
       result)))
 
 ;; The certificates CRDT accumulates a set of certificate
@@ -279,7 +279,7 @@
   (define crdt
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
-           #:effect (effect+publish effect pubsub 'updated-certificates)))
+           #:effect (effect+publish effect pubsub 'update-certificates)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((remove-replica replica) (: crdt 'remove-replica replica))
@@ -315,7 +315,7 @@
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
-           #:effect (effect+publish effect pubsub 'updated-profiles)))
+           #:effect (effect+publish effect pubsub 'update-profiles)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((remove-replica replica) (: crdt 'remove-replica replica))
@@ -352,33 +352,39 @@
   ;; TODO: Ignore events referring to messages that are not from
   ;; causal predecessors.
   (define (effect id timestamp who exp messages)
+    (define-syntax-rule (publish arg ...)
+      (<-np pubsub 'publish arg ...))
     (match exp
       (('post cert-id created contents)
-       (hashmap-set messages id
-                    (make-message id timestamp who cert-id created contents)))
+       (let ((msg (make-message id timestamp who cert-id created contents)))
+         (publish 'new-message id created)
+         (hashmap-set messages id msg)))
       (('edit cert-id msg-id when contents)
-       (let ((msg (hashmap-ref messages msg-id)))
-         (hashmap-set messages msg-id
-                      (message-edit msg id timestamp who cert-id
-                                    when contents))))
+       (let* ((old (hashmap-ref messages msg-id))
+              (new (message-edit old id timestamp who cert-id when contents)))
+         (publish 'modify-message msg-id (message-created-at new))
+         (hashmap-set messages msg-id new)))
       (('delete cert-id msg-id when)
-       (let ((msg (hashmap-ref messages msg-id)))
-         (hashmap-set messages msg-id
-                      (message-delete msg id timestamp who cert-id when))))
+       (let* ((old (hashmap-ref messages msg-id))
+              (new (message-delete old id timestamp who cert-id when)))
+         (publish 'modify-message msg-id (message-created-at new))
+         (hashmap-set messages msg-id new)))
       (('react cert-id msg-id when emoji)
-       (hashmap-set messages msg-id
-                    (message-react (hashmap-ref messages msg-id)
-                                   id timestamp who cert-id when emoji)))
+       (let* ((old (hashmap-ref messages msg-id))
+              (new (message-react old id timestamp who cert-id when emoji)))
+         (publish 'modify-message msg-id (message-created-at new))
+         (hashmap-set messages msg-id new)))
       (('unreact cert-id msg-id when emoji)
-       (hashmap-set messages msg-id
-                    (message-unreact (hashmap-ref messages msg-id)
-                                     id timestamp who cert-id when emoji)))
+       (let* ((old (hashmap-ref messages msg-id))
+              (new (message-unreact old id timestamp who cert-id when emoji)))
+         (publish 'modify-message msg-id (message-created-at new))
+         (hashmap-set messages msg-id new)))
       (_ messages)))
   (define crdt
     (spawn ^crdt replica-id private-key
            #:init (make-hashmap)
            #:query query
-           #:effect (effect+publish effect pubsub 'updated-messages)))
+           #:effect effect))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
    ((remove-replica replica) (: crdt 'remove-replica replica))
@@ -484,7 +490,7 @@
           log)))
   (define (partition-for-time time)
     (partition-ref (floor (/ time period))))
-  (define (messages-view messages certs)
+  (define (render-message message certs)
     (define (allowed? cert-id op author who)
       (match (hashmap-ref certs cert-id)
         (#f #f)
@@ -514,34 +520,45 @@
                              (whos (hashmap-set memo emoji whos)))))
                      memo))))
             (make-hashmap) reacts))
+    (match message
+      ((msg-id author cert-id created-at contents reacts edits deletes)
+       (if (allowed? cert-id 'post author author)
+           (let ((edited (latest-edit author edits))
+                 (deleted (latest-delete author deletes)))
+             (list msg-id author cert-id
+                   ;; Created, modified, deleted timestamps.
+                   created-at
+                   (match edited
+                     (#f #f)
+                     ((_ _ when _) when))
+                   (match deleted
+                     (#f #f)
+                     ((_ _ when) when))
+                   ;; Contents, either the original, the latest
+                   ;; edit, or nothing if the message was
+                   ;; "deleted".
+                   (and (not deleted)
+                        (match edited
+                          (#f contents)
+                          ((_ _ _ contents) contents)))
+                   ;; Emoji reactions.
+                   (hashmap-fold alist-cons '()
+                                 (reactions author reacts))))))))
+  ;; TODO: This is O(n), ugh.
+  (define (message-view messages msg-id certs)
+    (let lp ((messages messages))
+      (match messages
+        (() #f)
+        ((message . messages)
+         (match message
+           ((msg-id* . _)
+            (if (equal? msg-id msg-id*)
+                (render-message message certs)
+                (lp messages))))))))
+  (define (messages-view messages certs)
     (fold-right
-     (lambda (msg memo)
-       (match msg
-         ((id author cert-id created-at contents reacts edits deletes)
-          (if (allowed? cert-id 'post author author)
-              (let ((edited (latest-edit author edits))
-                    (deleted (latest-delete author deletes)))
-                (cons (list id author cert-id
-                            ;; Created, modified, deleted timestamps.
-                            created-at
-                            (match edited
-                              (#f #f)
-                              ((_ _ when _) when))
-                            (match deleted
-                              (#f #f)
-                              ((_ _ when) when))
-                            ;; Contents, either the original, the latest
-                            ;; edit, or nothing if the message was
-                            ;; "deleted".
-                            (and (not deleted)
-                                 (match edited
-                                   (#f contents)
-                                   ((_ _ _ contents) contents)))
-                            ;; Emoji reactions.
-                            (hashmap-fold alist-cons '()
-                                          (reactions author reacts)))
-                      memo))
-              memo))))
+     (lambda (message memo)
+       (cons (render-message message certs) memo))
      '() messages))
   (methods
    ((replica-id) replica-id)
@@ -584,10 +601,13 @@
                       (: log 'remove-replica partition-replica)))
                    (hashmap-ref (: partition-replicas) replica)))))
     #t)
-   ((ref time)
-    (messages-view (: (partition-for-time time) 'ref)
-                   (: certificates 'ref)))
-   ;; Mainly for testing.
+   ;; Return data for a single message.
+   ((ref-message msg-id created-at)
+    (message-view (: (partition-for-time created-at) 'ref)
+                  msg-id
+                  (: certificates 'ref)))
+   ;; Return a list of *all* messages across all partitions, in
+   ;; chronological order.
    ((all-messages)
     (messages-view
      (append-map (match-lambda ((_ . log) (: log 'ref)))
