@@ -99,7 +99,7 @@
   (define public-key
     (captp-public-key->bytevector
      (key-pair->public-key private-key)))
-  (define replicas (spawn ^cell (make-hashmap))) ; data sync peers
+  (define replicas (spawn ^cell '())) ; data sync peers
   (define clock (spawn ^cell (make-clock replica-id))) ; hybrid logical clock
   (define log (spawn ^cell (make-hashmap))) ; append-only event log
   (define pending (spawn ^cell (make-hashmap))) ; event queue
@@ -173,17 +173,19 @@
              (event-ids
               (sync! replica event-ids))))))))
   (define (sync-all!)
-    (hashmap-for-each (lambda (_ r) (sync! r (: heads))) (: replicas)))
+    (for-each (lambda (r) (sync! r (: heads))) (: replicas)))
   (methods
    ;; Return the user-visible representation of the current state.
    ((ref) (query (: state)))
-   ;; Add a remote replica.
-   ;;
-   ;; TODO: Remove replica on severance.
+   ;; Add a replica.
    ((add-replica new)
-    (let-on ((id* (<- new 'replica-id)))
-      (: replicas (hashmap-set (: replicas) id* new))
-      (sync! new (: heads))))
+    (: replicas (cons new (: replicas)))
+    (sync! new (: heads)))
+   ;; Remove a replica.  Note that this actor *does not* auto-remove
+   ;; remote replicas that disconnect because these CRDT actors are
+   ;; not typically exposed to remote users directly.
+   ((remove-replica old)
+    (: replicas (delq old (: replicas))))
    ;; Query to see if any of the given events *or* their
    ;; predecessors are missing.
    ;;

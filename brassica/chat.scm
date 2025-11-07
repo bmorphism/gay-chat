@@ -282,6 +282,7 @@
            #:effect (effect+publish effect pubsub 'updated-certificates)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
+   ((remove-replica replica) (: crdt 'remove-replica replica))
    ((ref) (: crdt 'ref))
    ((missing event-ids) (: crdt 'missing event-ids))
    ((push events) (: crdt 'push events))
@@ -317,6 +318,7 @@
            #:effect (effect+publish effect pubsub 'updated-profiles)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
+   ((remove-replica replica) (: crdt 'remove-replica replica))
    ((ref) (: crdt 'ref))
    ((missing event-ids) (: crdt 'missing event-ids))
    ((push events) (: crdt 'push events))
@@ -379,6 +381,7 @@
            #:effect (effect+publish effect pubsub 'updated-messages)))
   (methods
    ((add-replica replica) (: crdt 'add-replica replica))
+   ((remove-replica replica) (: crdt 'remove-replica replica))
    ((ref) (: crdt 'ref))
    ((missing event-ids) (: crdt 'missing event-ids))
    ((push events) (: crdt 'push events))
@@ -453,6 +456,7 @@
   ;; Tell the group our self-proposed name.
   (: profiles 'set-spn spn)
   (define replicas (spawn ^cell '()))
+  (define partition-replicas (spawn ^cell (make-hashqmap)))
   ;; The chat log is partitioned by time to keep the size of each
   ;; individual CRDT small and allow for dropping entire chunks of
   ;; history.  The message creation timestamp is used as the partition
@@ -467,7 +471,15 @@
           (for-each
            (lambda (replica)
              (let ((replica* (spawn ^partition-replica replica key)))
-               (: log 'add-replica replica*)))
+               (: log 'add-replica replica*)
+               ;; Add to set of partition replicas for this remote
+               ;; replica.  We use this for removing the local proxy
+               ;; replicas later when the remote replica disconnects.
+               (: partition-replicas
+                  (hashmap-set (: partition-replicas) replica
+                               (cons (cons log replica*)
+                                     (hashmap-ref (: partition-replicas)
+                                                  replica '()))))))
            (: replicas))
           log)))
   (define (partition-for-time time)
@@ -541,14 +553,37 @@
    ((fresh-replica)
     (spawn-revokable-and-revoker replica))
    ((add-replica replica)
+    ;; Create local proxies to the remote replica for each component
+    ;; CRDT inside this chat room.
+    (define certs-replica (spawn ^certificates-replica replica))
+    (define profiles-replica (spawn ^profiles-replica replica))
     (: replicas (cons replica (: replicas)))
-    (: certificates 'add-replica (spawn ^certificates-replica replica))
-    (: profiles 'add-replica (spawn ^profiles-replica replica))
-    (hashmap-for-each
-     (lambda (key log)
-       (let ((replica* (spawn ^partition-replica replica key)))
-         (: log 'add-replica replica*)))
-     (: partitions)))
+    (: certificates 'add-replica certs-replica)
+    (: profiles 'add-replica profiles-replica)
+    ;; Create and register new partition replicas so they can be
+    ;; cleaned up later when the remote replica disconnects.
+    (: partition-replicas
+       (hashmap-set (: partition-replicas) replica
+                    (hashmap-fold
+                     (lambda (key log replicas)
+                       (let ((replica* (spawn ^partition-replica replica key)))
+                         (: log 'add-replica replica*)
+                         (cons (cons log replica*) replicas)))
+                     '()  (: partitions))))
+    ;; Remove all local proxy replicas when the remote replica
+    ;; disconnects.
+    (when (remote-refr? replica)
+      (on-sever
+       replica
+       (lambda (type reason)
+         (: replicas (delq replica (: replicas)))
+         (: certificates 'remove-replica certs-replica)
+         (: profiles 'remove-replica profiles-replica)
+         (for-each (match-lambda
+                     ((log . partition-replica)
+                      (: log 'remove-replica partition-replica)))
+                   (hashmap-ref (: partition-replicas) replica)))))
+    #t)
    ((ref time)
     (messages-view (: (partition-for-time time) 'ref)
                    (: certificates 'ref)))
