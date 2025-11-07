@@ -62,7 +62,8 @@ const wasmOpts = {
       removeEventListener: (target, type, listener) => target.removeEventListener(type, listener),
       target: (event) => event.target,
       preventDefault: (event) => event.preventDefault(),
-      keyboardKey: (event) => event.key
+      keyboardKey: (event) => event.key,
+      keyboardShiftKey: (event) => event.shiftKey
     },
     uint8Array: {
       new: (length) => new Uint8Array(length),

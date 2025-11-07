@@ -189,8 +189,9 @@ relay.")
              (match (keyboard-event-key event)
                ("Enter"
                 (let ((contents (element-value target)))
-                  (prevent-default! event)
-                  (unless (string-null? contents)
+                  (unless (or (string-null? contents)
+                              (keyboard-event-shift? event))
+                    (prevent-default! event)
                     (*backend* 'send (room-actor room) 'edit
                                (room-certificate-id room)
                                msg-id created-at
@@ -199,6 +200,7 @@ relay.")
                     ;; TODO: Just refresh this one message.
                     (refresh-room-log room))))
                ("Escape"
+                (prevent-default! event)
                 (set-room-editing! room #f)
                 (set-outer-shtml!
                  target
@@ -294,7 +296,9 @@ relay.")
       (prevent-default! event)
       (send-message))
     (define (send-message/enter event)
-      (when (string=? (keyboard-event-key event) "Enter")
+      (when (and (string=? (keyboard-event-key event) "Enter")
+                 (not (keyboard-event-shift? event)))
+        (prevent-default! event)
         (send-message)))
     (define (create-invite event)
       (prevent-default! event)

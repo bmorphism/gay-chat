@@ -24,7 +24,8 @@
             remove-event-listener!
             event-target
             prevent-default!
-            keyboard-event-key))
+            keyboard-event-key
+            keyboard-event-shift?))
 
 ;; EventTarget
 (define-foreign add-event-listener!
@@ -46,3 +47,8 @@
 (define-foreign keyboard-event-key
   "event" "keyboardKey"
   (ref extern) -> (ref string))
+(define-foreign %keyboard-event-shift-key
+  "event" "keyboardShiftKey"
+  (ref extern) -> i32)
+(define (keyboard-event-shift? event)
+  (eq? (%keyboard-event-shift-key event) 1))
