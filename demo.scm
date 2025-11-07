@@ -197,7 +197,7 @@
          ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "Hello"))
           ;; Bob reacts to Carol's greeting.
-          (<-np chat-bob 'react cert-bob id created-at #\👋)
+          (<-np chat-bob 'react cert-bob id created-at "👋")
           ;; Bob cannot edit Carol's message.
           (<-np chat-bob 'edit cert-bob id created-at "owo"))
          ((and (equal? (assoc-ref names author) "Bob")
@@ -207,7 +207,7 @@
          ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "This is a neat chat demo!"))
           ;; Bob agrees that this demo is neat.
-          (<-np chat-bob 'react cert-bob id created-at #\💯))
+          (<-np chat-bob 'react cert-bob id created-at "💯"))
          ((and (equal? (assoc-ref names author) "Carol")
                (equal? contents "Yeah, it's so grood."))
           ;; Bob cannot delete Carol's message.
@@ -223,13 +223,13 @@
          ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "Hello"))
           ;; Carol reacts to Alice's greeting.
-          (<-np chat-carol 'react cert-carol id created-at #\👋))
+          (<-np chat-carol 'react cert-carol id created-at "👋"))
          ((and (equal? (assoc-ref names author) "Alice")
                (equal? contents "This is a neat chat demo!"))
           ;; Carol accidentally reacts with a thumbs down emoji and
           ;; quickly unreacts.
-          (<-np chat-carol 'react cert-carol id created-at #\👎)
-          (<-np chat-carol 'unreact cert-carol id created-at #\👎))
+          (<-np chat-carol 'react cert-carol id created-at "👎")
+          (<-np chat-carol 'unreact cert-carol id created-at "👎"))
          ((and (equal? (assoc-ref names author) "Carol")
                (equal? contents "Yeah, it's so grood."))
           ;; Carol edits her previous message to fix a typo.

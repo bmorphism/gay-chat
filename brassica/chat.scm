@@ -150,14 +150,14 @@
   (deletes message-deletes))        ; list of <delete>
 
 (define-record-type <react>
-  (make-react id timestamp reactor certificate reacted-at char reacted?)
+  (make-react id timestamp reactor certificate reacted-at emoji reacted?)
   react?
   (id react-id)                   ; SHA-256 hash
   (timestamp react-timestamp)     ; HLC
   (reactor react-reactor)         ; ed25519 public key
   (certificate react-certificate) ; SHA-256 hash
   (reacted-at react-reacted-at)   ; epoch time (ms)
-  (char react-char)               ; char
+  (emoji react-emoji)             ; string
   (reacted? react-reacted?))      ; boolean
 
 (define-record-type <edit>
@@ -198,19 +198,19 @@
        (%make-message id* author timestamp* cert-id* created-at contents
                       reacts edits (cons delete deletes))))))
 
-(define (%message-react msg id timestamp reactor cert-id when char value)
+(define (%message-react msg id timestamp reactor cert-id when emoji value)
   (match msg
     (($ <message> id* author timestamp* cert-id* created-at contents
                   reacts edits deletes)
-     (let ((react (make-react id timestamp reactor cert-id when char value)))
+     (let ((react (make-react id timestamp reactor cert-id when emoji value)))
        (%make-message id* author timestamp* cert-id* created-at contents
                       (cons react reacts) edits deletes)))))
 
-(define (message-react msg id timestamp reactor cert-id when char)
-  (%message-react msg id timestamp reactor cert-id when char #t))
+(define (message-react msg id timestamp reactor cert-id when emoji)
+  (%message-react msg id timestamp reactor cert-id when emoji #t))
 
-(define (message-unreact msg id timestamp reactor cert-id when char)
-  (%message-react msg id timestamp reactor cert-id when char #f))
+(define (message-unreact msg id timestamp reactor cert-id when emoji)
+  (%message-react msg id timestamp reactor cert-id when emoji #f))
 
 (define (message<? a b)
   (if (= (message-created-at a) (message-created-at b))
@@ -333,8 +333,8 @@
             (list id author cert-id created-at contents
                   ;; Reacts.
                   (map (match-lambda
-                         (($ <react> _ _ reactor cert-id when char reacted?)
-                          (list reactor cert-id when char reacted?)))
+                         (($ <react> _ _ reactor cert-id when emoji reacted?)
+                          (list reactor cert-id when emoji reacted?)))
                        (sort reacts react<?))
                   ;; Edits, in reverse chronological order.
                   (map (match-lambda
@@ -365,14 +365,14 @@
        (let ((msg (hashmap-ref messages msg-id)))
          (hashmap-set messages msg-id
                       (message-delete msg id timestamp who cert-id when))))
-      (('react cert-id msg-id when char)
+      (('react cert-id msg-id when emoji)
        (hashmap-set messages msg-id
                     (message-react (hashmap-ref messages msg-id)
-                                   id timestamp who cert-id when char)))
-      (('unreact cert-id msg-id when char)
+                                   id timestamp who cert-id when emoji)))
+      (('unreact cert-id msg-id when emoji)
        (hashmap-set messages msg-id
                     (message-unreact (hashmap-ref messages msg-id)
-                                     id timestamp who cert-id when char)))
+                                     id timestamp who cert-id when emoji)))
       (_ messages)))
   (define crdt
     (spawn ^crdt replica-id private-key
@@ -391,10 +391,10 @@
     (: crdt 'commit `(edit ,cert-id ,msgid ,when ,contents)))
    ((delete cert-id msgid when)
     (: crdt 'commit `(delete ,cert-id ,msgid ,when)))
-   ((react cert-id msgid when char)
-    (: crdt 'commit `(react ,cert-id ,msgid ,when ,char)))
-   ((unreact cert-id msgid when char)
-    (: crdt 'commit `(unreact ,cert-id ,msgid ,when ,char)))))
+   ((react cert-id msgid when emoji)
+    (: crdt 'commit `(react ,cert-id ,msgid ,when ,emoji)))
+   ((unreact cert-id msgid when emoji)
+    (: crdt 'commit `(unreact ,cert-id ,msgid ,when ,emoji)))))
 
 (define (spawn-revokable-and-revoker obj)
   (define token (list 'revoke))
@@ -503,17 +503,17 @@
     (define (reactions author reacts)
       (fold (lambda (react memo)
               (match react
-                ((who cert-id when char reacted?)
+                ((who cert-id when emoji reacted?)
                  (if (allowed? cert-id 'react author who)
-                     (let ((whos (hashmap-ref memo char '())))
+                     (let ((whos (hashmap-ref memo emoji '())))
                        (if reacted?
-                           (hashmap-set memo char
+                           (hashmap-set memo emoji
                                         (lset-adjoin equal? whos who))
                            (match (delete who whos)
-                             (() (hashmap-remove memo char))
-                             (whos (hashmap-set memo char whos)))))
+                             (() (hashmap-remove memo emoji))
+                             (whos (hashmap-set memo emoji whos)))))
                      memo))))
-            (make-hashvmap) reacts))
+            (make-hashmap) reacts))
     (fold-right
      (lambda (msg memo)
        (match msg
@@ -609,7 +609,7 @@
     (: (partition-for-time created) 'edit cert-id msg-id now contents))
    ((delete cert-id msg-id created #:optional (now (current-time/ms)))
     (: (partition-for-time created) 'delete cert-id msg-id now))
-   ((react cert-id msg-id created char #:optional (now (current-time/ms)))
-    (: (partition-for-time created) 'react cert-id msg-id now char))
-   ((unreact cert-id msg-id created char #:optional (now (current-time/ms)))
-    (: (partition-for-time created) 'unreact cert-id msg-id now char))))
+   ((react cert-id msg-id created emoji #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'react cert-id msg-id now emoji))
+   ((unreact cert-id msg-id created emoji #:optional (now (current-time/ms)))
+    (: (partition-for-time created) 'unreact cert-id msg-id now emoji))))
