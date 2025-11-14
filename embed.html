@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,interactive-widget=resizes-content">
+    <script type="text/javascript" src="reflect.js"></script>
+    <script type="text/javascript" src="embed.js"></script>
+    <style>
+     :root {
+         --brassica-background-color: #0f1b26;
+         --brassica-background-secondary-color: #1d2938;
+         --brassica-input-background-color: #222034;
+         --brassica-foreground-color: #f0f6f0;
+         --brassica-highlight-color: #f2eb7c;
+         --brassica-accent-color: #ff4adc;
+         --brassica-username-color: #70b9fb;
+     }
+
+     html {
+         width: 100dvw;
+         height: 100dvh;
+         font-family: sans;
+         background-color: var(--brassica-background-color);
+         color: var(--brassica-foreground-color);
+     }
+
+     body {
+         margin: 0;
+         height: 100%;
+     }
+
+     main {
+         height: 100%;
+     }
+
+     article {
+         padding: 0.5rem;
+     }
+
+     section {
+         padding: 0.5rem;
+     }
+
+     p {
+         margin-top: 0;
+         margin-bottom: 1rem;
+     }
+
+     dialog {
+         background-color: var(--brassica-background-secondary-color);
+         color: var(--brassica-foreground-color);
+         border: none;
+     }
+
+     form {
+         display: flex;
+         flex-direction: column;
+     }
+
+     button {
+         background-color: var(--brassica-highlight-color);
+         color: var(--brassica-background-color);
+         border: none;
+         padding: 0.5rem;
+         font-size: 110%;
+     }
+
+     button:hover {
+         background-color: color-mix(in srgb, var(--brassica-highlight-color), white 10%)
+     }
+
+     input, textarea {
+         background-color: var(--brassica-input-background-color);
+         color: var(--brassica-foreground-color);
+         border: 0.1rem solid #306082;
+         margin: 0;
+         padding: 0.5rem;
+         font-size: 1rem;
+     }
+
+     .main {
+         display: flex;
+         flex-direction: column;
+         justify-content: center;
+     }
+
+     @media (max-width: 950px) {
+         .chat-main {
+             display: flex;
+             flex-direction: column;
+         }
+         .chat-window {
+             display: flex;
+             flex-direction: column;
+         }
+         .room-log {
+             height: 15rem;
+             overflow: scroll;
+         }
+     }
+     @media (min-width: 950px) {
+         .chat-main {
+             display: flex;
+             flex-direction: row;
+         }
+         .chat-window {
+             display: flex;
+             flex-direction: column;
+             flex-grow: 1;
+         }
+     }
+
+     .room-log {
+         display: flex;
+         flex-direction: column;
+         flex-grow: 1;
+         margin: 0.5rem;
+         overflow: scroll;
+     }
+
+     .message-block {
+         margin-bottom: 0.5rem;
+         padding: 0;
+     }
+
+     .message-block header {
+         margin-bottom: 0.5rem;
+     }
+
+     .message-block cite {
+         color: var(--brassica-username-color);
+         font-weight: bold;
+         font-style: normal;
+     }
+
+     .message-block .message {
+         position: relative;
+         padding: 0.25rem;
+     }
+
+     .message-block .message:hover, .message-tapped {
+         background-color: var(--brassica-background-secondary-color);
+     }
+
+     .message-block p {
+         margin-bottom: 0.25rem;
+     }
+
+     .message-toolbar {
+         display: none;
+     }
+
+     .message-block .message:hover .message-toolbar, .message-tapped .message-toolbar {
+         display: flex;
+         flex-direction: row;
+         gap: 0.5rem;
+         position: absolute;
+         top: 0;
+         right: 0;
+         border: 1px solid var(--brassica-background-secondary-color);
+         background-color: var(--brassica-background-color);
+     }
+
+     .message-toolbar a {
+         text-decoration: none;
+         color: var(--brassica-highlight-color)
+     }
+
+     .message-removed {
+         font-style: italic;
+         color: #555;
+     }
+
+     .message-reactions {
+         display: flex;
+         flex-direction: row;
+     }
+
+     .message-reactions {
+         list-style-type: none;
+         padding: 0;
+     }
+
+     .message-reactions li {
+         padding: 0.5rem;
+         border: 1px solid var(--brassica-background-secondary-color);
+         cursor: pointer;
+     }
+
+     .message-reactions li.our-reaction {
+         padding: 0.5rem;
+         border: 1px solid var(--brassica-background-secondary-color);
+         background-color: var(--brassica-background-secondary-color);
+     }
+
+     .room-compose {
+         display: flex;
+         flex-direction: row;
+         align-items: stretch;
+         height: 5rem;
+         padding: 0
+     }
+
+     .room-compose textarea {
+         flex-grow: 1;
+         resize: none;
+         background-color: var(--brassica-background-color);
+         outline: none;
+         border: none;
+         border-top: 1px solid var(--brassica-background-secondary-color);
+     }
+
+     .room-compose textarea:focus {
+         border: 0.1rem solid var(--brassica-highlight-color);
+     }
+
+     .room-compose button {
+         width: 5rem;
+         font-size: 3rem;
+         border-radius: 0;
+         border-top: 1px solid var(--brassica-background-secondary-color);
+         background: none;
+         color: var(--brassica-highlight-color);
+     }
+
+     .room-compose button:focus {
+         outline: none;
+         border: 1px solid var(--brassica-highlight-color);
+     }
+    </style>
+  </head>
+  <body>
+    <main id="intro" class="main">
+      <dialog open="">
+        <h1>Brassica Chat demo</h1>
+        <p>Chat as Alice, Bob, and Carol over simulated OCapN connections.</p>
+        <form>
+          <button id="run-demo">Start demo</button>
+        </form>
+      </dialog>
+    </main>
+  </body>
+</html>

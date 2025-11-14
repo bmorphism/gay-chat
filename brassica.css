@@ -209,7 +209,7 @@ form fieldset label {
     padding: 0;
 }
 
-#room-log {
+.room-log {
     display: flex;
     flex-direction: column;
     flex-grow: 1;
@@ -238,7 +238,7 @@ form fieldset label {
     padding: 0;
 }
 
-.message-block ol > li {
+.message-block .message {
     position: relative;
     padding: 0.25rem;
 }
@@ -255,7 +255,7 @@ form fieldset label {
     display: none;
 }
 
-.message-block ol > li:hover .message-toolbar {
+.message-block .message:hover .message-toolbar {
     display: flex;
     flex-direction: row;
     gap: 0.5rem;

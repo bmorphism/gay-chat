@@ -14,11 +14,12 @@
 
 (use-modules (brassica chat)
              (fibers)
+             (fibers channels)
              ((goblins) #:hide ($))
              ((goblins) #:select (($ . :)))
              (goblins ocapn ids)
              (goblins ocapn captp)
-             (goblins ocapn netlayer tcp-tls)
+             (goblins ocapn netlayer fake)
              (goblins utils hashmap)
              (ice-9 match)
              (srfi srfi-1))
@@ -27,6 +28,8 @@
 (define vat-alice (spawn-vat))
 (define vat-bob (spawn-vat))
 (define vat-carol (spawn-vat))
+;; One more vat for our fake network.
+(define fake-network-vat (spawn-vat))
 
 ;; Alice, Bob, and Carol create cryptographic identities for
 ;; themselves.
@@ -76,27 +79,30 @@
   (apply values (with-vat vat-carol (: chat-carol 'fresh-replica))))
 
 ;; And now we hook everything up to OCapN!
-(define netlayer-alice (with-vat vat-alice (spawn ^tcp-tls-netlayer "localhost")))
-(define netlayer-bob (with-vat vat-bob (spawn ^tcp-tls-netlayer "localhost")))
-(define netlayer-carol (with-vat vat-carol (spawn ^tcp-tls-netlayer "localhost")))
+(define fake-network (with-vat fake-network-vat (spawn ^fake-network)))
+(define (spawn-fake-netlayer name)
+  (let* ((new-conn-ch (make-channel))
+         (netlayer (spawn ^fake-netlayer name fake-network new-conn-ch)))
+    (<-np fake-network 'register name new-conn-ch)
+    netlayer))
+(define netlayer-alice (with-vat vat-alice (spawn-fake-netlayer "alice")))
+(define netlayer-bob (with-vat vat-bob (spawn-fake-netlayer "bob")))
+(define netlayer-carol (with-vat vat-carol (spawn-fake-netlayer "carol")))
 
 (define mycapn-alice (with-vat vat-alice (spawn-mycapn netlayer-alice)))
 (define mycapn-bob (with-vat vat-bob (spawn-mycapn netlayer-bob)))
 (define mycapn-carol (with-vat vat-carol (spawn-mycapn netlayer-carol)))
 
 (define sturdyref-alice<-bob
-  (with-vat vat-alice (: mycapn-alice 'register chat-alice<-bob 'tcp-tls)))
+  (with-vat vat-alice (: mycapn-alice 'register chat-alice<-bob 'fake)))
 (define sturdyref-alice<-carol
-  (with-vat vat-alice (: mycapn-alice 'register chat-alice<-carol 'tcp-tls)))
+  (with-vat vat-alice (: mycapn-alice 'register chat-alice<-carol 'fake)))
 (define sturdyref-bob<-alice
-  (with-vat vat-bob (: mycapn-bob 'register chat-bob<-alice 'tcp-tls)))
+  (with-vat vat-bob (: mycapn-bob 'register chat-bob<-alice 'fake)))
 (define sturdyref-carol<-alice
-  (with-vat vat-carol (: mycapn-carol 'register chat-carol<-alice 'tcp-tls)))
+  (with-vat vat-carol (: mycapn-carol 'register chat-carol<-alice 'fake)))
 
 ;; Some helper procedures to print out the results of this demo.
-;;
-;; TODO: Move all the filtering based on certificate to the ^chat-room
-;; actor.
 (define (render-chat title names messages)
   (format #t "# Chat log for ~a\n" title)
   (newline)

@@ -22,4 +22,7 @@ app-ui.wasm: app-ui.scm $(ui_modules)
 server: app-backend.wasm app-ui.wasm server.scm
 	guile -L . server.scm
 
+embed.wasm: embed.scm $(backend_modules) $(ui_modules)
+	guild compile-wasm --bundle -L . -o embed.wasm embed.scm
+
 .PHONY: demo app server

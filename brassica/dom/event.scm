@@ -23,6 +23,7 @@
   #:export (add-event-listener!
             remove-event-listener!
             event-target
+            event-current-target
             prevent-default!
             keyboard-event-key
             keyboard-event-shift?))
@@ -38,6 +39,9 @@
 ;; Event
 (define-foreign event-target
   "event" "target"
+  (ref extern) -> (ref extern))
+(define-foreign event-current-target
+  "event" "currentTarget"
   (ref extern) -> (ref extern))
 (define-foreign prevent-default!
   "event" "preventDefault"

@@ -108,8 +108,10 @@ const wasmOpts = {
   }
 };
 
-window.addEventListener("load", async () => {
-  const [makeBackend] = await Scheme.load_main("app-backend.wasm", wasmOpts);
-  const [spawnGui] = await makeBackend.reflector.load_extension("app-ui.wasm", wasmOpts);
-  spawnGui.call(makeBackend);
+window.addEventListener("load", () => {
+  document.getElementById("run-demo").addEventListener("click", async (event) => {
+    event.preventDefault();
+    document.getElementById("intro").remove();
+    await Scheme.load_main("embed.wasm", wasmOpts);
+  });
 });

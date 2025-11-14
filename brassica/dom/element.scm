@@ -22,10 +22,15 @@
   #:use-module (hoot ffi)
   #:export (element-value
             set-element-value!
+            element-class
+            set-element-class!
             element-width
             set-element-width!
             element-height
             set-element-height!
+            element-scroll-top
+            set-element-scroll-top!
+            element-scroll-top-max
             first-child
             next-sibling
             append-child!
@@ -42,6 +47,12 @@
 (define-foreign set-element-value!
   "element" "setValue"
   (ref extern) (ref string) -> none)
+(define-foreign element-class
+  "element" "class"
+  (ref extern) -> (ref string))
+(define-foreign set-element-class!
+  "element" "setClass"
+  (ref extern) (ref string) -> none)
 (define-foreign element-width
   "element" "width"
   (ref extern) -> i32)
@@ -54,6 +65,15 @@
 (define-foreign set-element-height!
   "element" "setHeight"
   (ref extern) i32 -> none)
+(define-foreign element-scroll-top
+  "element" "scrollTop"
+  (ref extern) -> i32)
+(define-foreign set-element-scroll-top!
+  "element" "setScrollTop"
+  (ref extern) i32 -> none)
+(define-foreign element-scroll-top-max
+  "element" "scrollTopMax"
+  (ref extern) -> i32)
 (define-foreign first-child
   "element" "firstChild"
   (ref extern) -> (ref null extern))
