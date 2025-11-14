@@ -146,6 +146,8 @@
   (with-vat vat-carol (: mycapn-carol 'register chat-carol<-alice)))
 
 (define (chat-window vat mycapn peers id cert-id room)
+  (define peer-names (map car peers))
+  (define peer-sturdyrefs (map cdr peers))
   (define connected? #t)
   (define name (with-vat vat (: id 'spn)))
   (define pubkey (with-vat vat (: id 'public-key)))
@@ -167,11 +169,11 @@
     (cond
      (connected?
       (set! connected? #f)
-      (set-inner-shtml! (get-element-by-id room-connection-id) "disconnected")
+      (set-inner-shtml! (get-element-by-id room-connection-id) "disconnected from")
       (with-vat vat (: mycapn 'disconnect)))
      (else
       (set! connected? #t)
-      (set-inner-shtml! (get-element-by-id room-connection-id) "connected")
+      (set-inner-shtml! (get-element-by-id room-connection-id) "connected to")
       (with-vat vat (: mycapn 'connect)))))
   (define (send-message event)
     (let* ((textarea (get-element-by-id room-compose-id))
@@ -208,12 +210,10 @@
         ((msg-id author cert-id* created-at modified-at deleted-at contents reacts)
          (define (reaction emoji)
            (lambda (event)
-             (prevent-default! event)
              (with-vat vat
                (: room 'react cert-id msg-id created-at emoji))))
          (define (unreaction emoji)
            (lambda (event)
-             (prevent-default! event)
              (with-vat vat
                (: room 'unreact cert-id msg-id created-at emoji))))
          (define (react-button emoji)
@@ -221,7 +221,6 @@
                   (click ,(reaction emoji)))
                ,emoji))
          (define (edit-message event)
-           (prevent-default! event)
            (set! editing message)
            (set-inner-shtml!
             (get-element-by-id room-editing-id)
@@ -230,7 +229,6 @@
              (focus! textarea)
              (set-element-value! textarea contents)))
          (define (remove-message event)
-           (prevent-default! event)
            (with-vat vat
              (: room 'delete cert-id msg-id created-at)))
          (define show-controls? #f)
@@ -259,7 +257,7 @@
                           (aside (@ (class "message-toolbar"))
                                  ,(react-button "❤️")
                                  ,(react-button "👍")
-                                 ,(react-button "🙂")
+                                 ,(react-button "🤣")
                                  ,(react-button "👋")
                                  ,(react-button "👀")
                                  (a (@ (href "#") (click ,edit-message)) "edit")
@@ -287,7 +285,7 @@
     ;; Attempt to connect to peers, retrying if we can't connect or if
     ;; we lose connection once established.
     (let ((retry-delay 1))
-      (let-on ((peers (all-of* peers)))
+      (let-on ((sturdyrefs (all-of* peer-sturdyrefs)))
         (for-each
          (lambda (sturdyref)
            (let try-again ()
@@ -302,10 +300,12 @@
                  #:catch
                  (lambda (err)
                    (on (timeout retry-delay) (lambda (_) (try-again)))))))
-         peers))))
+         sturdyrefs))))
   `(article (@ (class "chat-window"))
             (header
-             (p (strong ,name) ": " (span (@ (id ,room-connection-id)) "connected"))
+             (p (strong ,name) ": "
+                (span (@ (id ,room-connection-id)) "connected to")
+                " " ,(string-join peer-names ", "))
              (form
               (button (@ (click ,toggle-connection))
                       "Toggle connection")))
@@ -322,11 +322,12 @@
  (document-body)
  `(main (@ (class "chat-main"))
         ,(chat-window vat-alice mycapn-alice
-                      (list sturdyref-bob<-alice sturdyref-carol<-alice)
+                      `(("Bob" . ,sturdyref-bob<-alice)
+                        ("Carol" . ,sturdyref-carol<-alice))
                       id-alice cert-alice chat-alice)
         ,(chat-window vat-bob mycapn-bob
-                      (list sturdyref-alice<-bob)
+                      `(("Alice" . ,sturdyref-alice<-bob))
                       id-bob cert-bob chat-bob)
         ,(chat-window vat-carol mycapn-carol
-                      (list sturdyref-alice<-carol)
+                      `(("Alice" . ,sturdyref-alice<-carol))
                       id-carol cert-carol chat-carol)))
