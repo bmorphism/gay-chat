@@ -169,11 +169,11 @@
     (cond
      (connected?
       (set! connected? #f)
-      (set-inner-shtml! (get-element-by-id room-connection-id) "disconnected from")
+      (set-inner-shtml! (get-element-by-id room-connection-id) "disconnected")
       (with-vat vat (: mycapn 'disconnect)))
      (else
       (set! connected? #t)
-      (set-inner-shtml! (get-element-by-id room-connection-id) "connected to")
+      (set-inner-shtml! (get-element-by-id room-connection-id) "connected")
       (with-vat vat (: mycapn 'connect)))))
   (define (send-message event)
     (let* ((textarea (get-element-by-id room-compose-id))
@@ -304,8 +304,8 @@
   `(article (@ (class "chat-window"))
             (header
              (p (strong ,name) ": "
-                (span (@ (id ,room-connection-id)) "connected to")
-                " " ,(string-join peer-names ", "))
+                (span (@ (id ,room-connection-id)) "connected")
+                " — peers: " ,(string-join peer-names ", "))
              (form
               (button (@ (click ,toggle-connection))
                       "Toggle connection")))
