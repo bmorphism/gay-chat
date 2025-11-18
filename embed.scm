@@ -192,6 +192,11 @@
            (set! editing #f)
            (set-inner-shtml! (get-element-by-id room-editing-id) "")))
         (set-element-value! textarea ""))))
+  (define (cancel-edit event)
+    (prevent-default! event)
+    (set! editing #f)
+    (set-element-value! (get-element-by-id room-compose-id) "")
+    (set-inner-shtml! (get-element-by-id room-editing-id) ""))
   (define (compose-keydown event)
     (match (keyboard-event-key event)
       ("Enter"
@@ -199,12 +204,10 @@
          (send-message event)))
       ("Escape"
        (when editing
-         (prevent-default! event)
-         (set! editing #f)
-         (set-element-value! (get-element-by-id room-compose-id) "")
-         (set-inner-shtml! (get-element-by-id room-editing-id) "")))
+         (cancel-edit event)))
       (_ (values))))
   (define (refresh-messages messages names)
+    (define current-message-elem #f)
     (define (render-message message)
       (match message
         ((msg-id author cert-id* created-at modified-at deleted-at contents reacts)
@@ -216,68 +219,98 @@
            (lambda (event)
              (with-vat vat
                (: room 'unreact cert-id msg-id created-at emoji))))
-         (define (react-button emoji)
-           `(a (@ (href "#")
-                  (click ,(reaction emoji)))
-               ,emoji))
+         (define (emoji-react emoji)
+           `(li (a (@ (href "#")
+                      (click ,(reaction emoji)))
+                   ,emoji)))
          (define (edit-message event)
+           (prevent-default! event)
            (set! editing message)
            (set-inner-shtml!
             (get-element-by-id room-editing-id)
-            `(p (strong "Editing: ") ,contents))
+            `((p (strong "Editing: ") ,contents)
+              (a (@ (href "#")
+                    (click ,cancel-edit))
+                 "Cancel edit")))
+           ;; Close message options menu.
+           (remove-attribute! (parent-element (event-current-target event))
+                              "open")
+           ;; Unselect message.
+           (when current-message-elem
+             (set-element-class! current-message-elem "message")
+             (set! current-message-elem #f))
+           ;; Focus the composition textarea.
            (let ((textarea (get-element-by-id room-compose-id)))
              (focus! textarea)
              (set-element-value! textarea contents)))
          (define (remove-message event)
            (with-vat vat
              (: room 'delete cert-id msg-id created-at)))
-         (define show-controls? #f)
-         (define (toggle-controls event)
-           (cond
-            (show-controls?
-             ;; Defer hiding the controls in case the user tapped on
-             ;; an edit control.  We want the click handler to fire
-             ;; for that.
-             (set-element-class! (event-current-target event) "message")
-             (set! show-controls? #f))
-            (else
-             (set-element-class! (event-current-target event)
-                                 "message message-tapped")
-             (set! show-controls? #t))))
-         `(div (@ (class "message-block"))
-               (p (cite ,(assoc-ref names author)))
-               ,(if deleted-at
-                    '(p (@ (class "message-removed")) "message removed")
-                    `(div (@ (class "message")
-                             (click ,toggle-controls))
-                          (p ,contents)
-                          ,@(if modified-at
-                                '((small "(edited)"))
-                                '())
-                          (aside (@ (class "message-toolbar"))
-                                 ,(react-button "❤️")
-                                 ,(react-button "👍")
-                                 ,(react-button "🤣")
-                                 ,(react-button "👋")
-                                 ,(react-button "👀")
-                                 (a (@ (href "#") (click ,edit-message)) "edit")
-                                 (a (@ (href "#") (click ,remove-message)) "remove"))
-                          ,@(match reacts
-                              (() '())
-                              (reacts
-                               `((ul (@ (class "message-reactions"))
-                                     ,@(map (match-lambda
-                                              ((emoji . whos)
-                                               `(li ,(if (member pubkey whos)
-                                                         `(@ (class "our-reaction")
-                                                             (click ,(unreaction emoji)))
-                                                         `(@ (click ,(reaction emoji))))
-                                                    ,emoji " " ,(length whos))))
-                                            reacts)))))))))))
+         ;; Touch controls. A long press on a message will highlight
+         ;; it and display the message options.
+         (define pressed? #f)
+         (define (begin-select event)
+           (let ((target (event-current-target event)))
+             (unless pressed?
+               (set! pressed? #t)
+               (schedule-task
+                (lambda ()
+                  (when pressed?
+                    (when current-message-elem
+                      (set-element-class! current-message-elem "message"))
+                    (set-element-class! target "message message-selected")
+                    (set! current-message-elem target)))
+                200000))))
+         (define (end-select event)
+           (set! pressed? #f))
+         (if deleted-at
+             '(p (@ (class "message-removed")) "message removed")
+             `(div (@ (class "message")
+                      (touchstart ,begin-select)
+                      (touchend ,end-select))
+                   (p ,contents)
+                   ,@(if modified-at
+                         '((small "(edited)"))
+                         '())
+                   (details (@ (class "message-toolbar")
+                               (name "message-toolbar"))
+                            (summary)
+                            (ul ,(emoji-react "❤️")
+                                ,(emoji-react "👍")
+                                ,(emoji-react "🤣")
+                                ,(emoji-react "👋")
+                                ,(emoji-react "👀"))
+                            (a (@ (href "#") (click ,edit-message)) "edit")
+                            (a (@ (href "#") (click ,remove-message)) "remove"))
+                   ,@(match reacts
+                       (() '())
+                       (reacts
+                        `((ul (@ (class "message-reactions"))
+                              ,@(map (match-lambda
+                                       ((emoji . whos)
+                                        `(li ,(if (member pubkey whos)
+                                                  `(@ (class "our-reaction")
+                                                      (click ,(unreaction emoji)))
+                                                  `(@ (click ,(reaction emoji))))
+                                             ,emoji " " ,(length whos))))
+                                     reacts))))))))))
     (define log-elem (get-element-by-id room-log-id))
     (define scrolled-to-bottom?
       (= (element-scroll-top log-elem) (element-scroll-top-max log-elem)))
-    (set-inner-shtml! log-elem (map render-message messages))
+    (set-inner-shtml!
+     log-elem
+     (let lp ((messages messages) (prev-author #f))
+       (match messages
+         (() '())
+         ((message . messages)
+          (match message
+            ((msg-id author . _)
+             (if (equal? author prev-author)
+                 (cons (render-message message) (lp messages prev-author))
+                 (cons* `(div (@ (class "message-block"))
+                              (cite ,(assoc-ref names author)))
+                        (render-message message)
+                        (lp messages author)))))))))
     (when scrolled-to-bottom?
       (set-element-scroll-top! log-elem (element-scroll-top-max log-elem))))
   (with-vat vat

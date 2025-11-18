@@ -52,6 +52,7 @@ const wasmOpts = {
       scrollTop: (elem) => elem.scrollTop,
       setScrollTop: (elem, y) => elem.scrollTop = y,
       scrollTopMax: (elem) => elem.scrollTopMax,
+      parent: (elem) => elem.parentElement,
       firstChild: (elem) => elem.firstChild,
       nextSibling: (elem) => elem.nextSibling,
       appendChild: (parent, child) => parent.appendChild(child),

@@ -31,6 +31,7 @@
             element-scroll-top
             set-element-scroll-top!
             element-scroll-top-max
+            parent-element
             first-child
             next-sibling
             append-child!
@@ -74,6 +75,9 @@
 (define-foreign element-scroll-top-max
   "element" "scrollTopMax"
   (ref extern) -> i32)
+(define-foreign parent-element
+  "element" "parent"
+  (ref extern) -> (ref null extern))
 (define-foreign first-child
   "element" "firstChild"
   (ref extern) -> (ref null extern))
