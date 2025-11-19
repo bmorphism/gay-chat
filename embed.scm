@@ -207,16 +207,17 @@
          (cancel-edit event)))
       (_ (values))))
   (define (refresh-messages messages names)
-    (define current-message-elem #f)
     (define (render-message message)
       (match message
         ((msg-id author cert-id* created-at modified-at deleted-at contents reacts)
          (define (reaction emoji)
            (lambda (event)
+             (prevent-default! event)
              (with-vat vat
                (: room 'react cert-id msg-id created-at emoji))))
          (define (unreaction emoji)
            (lambda (event)
+             (prevent-default! event)
              (with-vat vat
                (: room 'unreact cert-id msg-id created-at emoji))))
          (define (emoji-react emoji)
@@ -232,13 +233,6 @@
               (a (@ (href "#")
                     (click ,cancel-edit))
                  "Cancel edit")))
-           ;; Close message options menu.
-           (remove-attribute! (parent-element (event-current-target event))
-                              "open")
-           ;; Unselect message.
-           (when current-message-elem
-             (set-element-class! current-message-elem "message")
-             (set! current-message-elem #f))
            ;; Focus the composition textarea.
            (let ((textarea (get-element-by-id room-compose-id)))
              (focus! textarea)
@@ -246,54 +240,42 @@
          (define (remove-message event)
            (with-vat vat
              (: room 'delete cert-id msg-id created-at)))
-         ;; Touch controls. A long press on a message will highlight
-         ;; it and display the message options.
-         (define pressed? #f)
-         (define (begin-select event)
-           (let ((target (event-current-target event)))
-             (unless pressed?
-               (set! pressed? #t)
-               (schedule-task
-                (lambda ()
-                  (when pressed?
-                    (when current-message-elem
-                      (set-element-class! current-message-elem "message"))
-                    (set-element-class! target "message message-selected")
-                    (set! current-message-elem target)))
-                200000))))
-         (define (end-select event)
-           (set! pressed? #f))
          (if deleted-at
              '(p (@ (class "message-removed")) "message removed")
-             `(div (@ (class "message")
-                      (touchstart ,begin-select)
-                      (touchend ,end-select))
-                   (p ,contents)
-                   ,@(if modified-at
-                         '((small "(edited)"))
-                         '())
-                   (details (@ (class "message-toolbar")
-                               (name "message-toolbar"))
-                            (summary)
-                            (ul ,(emoji-react "❤️")
+             `(details (@ (class "message")
+                          (name "message")
+                          ;; (touchstart ,begin-select)
+                          ;; (touchend ,end-select)
+                          )
+                       (summary
+                        (p ,contents)
+                        ,@(if modified-at
+                              '((small "(edited)"))
+                              '())
+                        ,@(match reacts
+                            (() '())
+                            (reacts
+                             `((ul (@ (class "message-reactions"))
+                                   ,@(map (match-lambda
+                                            ((emoji . whos)
+                                             `(li ,(if (member pubkey whos)
+                                                       `(@ (class "our-reaction")
+                                                           (click ,(unreaction emoji)))
+                                                       `(@ (click ,(reaction emoji))))
+                                                  ,emoji " " ,(length whos))))
+                                          reacts))))))
+                       (ul (@ (class "message-options"))
+                           (li
+                            (ul (@ (class "emoji-reacts"))
+                                ,(emoji-react "❤️")
                                 ,(emoji-react "👍")
                                 ,(emoji-react "🤣")
                                 ,(emoji-react "👋")
-                                ,(emoji-react "👀"))
-                            (a (@ (href "#") (click ,edit-message)) "edit")
-                            (a (@ (href "#") (click ,remove-message)) "remove"))
-                   ,@(match reacts
-                       (() '())
-                       (reacts
-                        `((ul (@ (class "message-reactions"))
-                              ,@(map (match-lambda
-                                       ((emoji . whos)
-                                        `(li ,(if (member pubkey whos)
-                                                  `(@ (class "our-reaction")
-                                                      (click ,(unreaction emoji)))
-                                                  `(@ (click ,(reaction emoji))))
-                                             ,emoji " " ,(length whos))))
-                                     reacts))))))))))
+                                ,(emoji-react "👀")))
+                           (li (a (@ (href "#") (click ,edit-message))
+                                  "edit"))
+                           (li (a (@ (href "#") (click ,remove-message))
+                                  "remove"))))))))
     (define log-elem (get-element-by-id room-log-id))
     (define scrolled-to-bottom?
       (= (element-scroll-top log-elem) (element-scroll-top-max log-elem)))
@@ -307,7 +289,7 @@
             ((msg-id author . _)
              (if (equal? author prev-author)
                  (cons (render-message message) (lp messages prev-author))
-                 (cons* `(div (@ (class "message-block"))
+                 (cons* `(div (@ (class "message-author"))
                               (cite ,(assoc-ref names author)))
                         (render-message message)
                         (lp messages author)))))))))

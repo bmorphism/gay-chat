@@ -19,7 +19,6 @@
      html {
          width: 100dvw;
          height: 100dvh;
-         font-family: sans;
          background-color: var(--brassica-background-color);
          color: var(--brassica-foreground-color);
      }
@@ -27,6 +26,7 @@
      body {
          margin: 0;
          height: 100%;
+         font-family: sans-serif;
      }
 
      main {
@@ -98,7 +98,7 @@
              flex-direction: column;
          }
          .room-log {
-             height: 15rem;
+             height: 10rem;
          }
      }
      @media (min-width: 950px) {
@@ -121,24 +121,16 @@
          overflow: auto;
      }
 
-     .message-block {
-         margin-bottom: 0.5rem;
+     .message-author {
+         margin-top: 0.25rem;
+         margin-bottom: 0.25rem;
          padding: 0;
      }
 
-     .message-block header {
-         margin-bottom: 0.5rem;
-     }
-
-     .message-block cite {
+     .message-author cite {
          color: var(--brassica-username-color);
          font-weight: bold;
          font-style: normal;
-     }
-
-     .message-block {
-         margin-top: 0.25rem;
-         margin-bottom: 0.25rem;
      }
 
      .message {
@@ -150,76 +142,27 @@
          margin-bottom: 0;
      }
 
-     .message-toolbar {
-         display: none;
-     }
-
-     @media (pointer: fine) {
-         .message:hover {
-             background-color: var(--brassica-background-secondary-color);
-         }
-         .message:hover .message-toolbar {
-             display: flex;
-             flex-direction: row;
-             gap: 0.5rem;
-             position: absolute;
-             top: 0;
-             right: 0;
-         }
-     }
-
-     @media (pointer: coarse) {
-         .message-selected {
-             background-color: var(--brassica-background-secondary-color);
-         }
-         .message-selected .message-toolbar {
-             display: flex;
-             flex-direction: row;
-             gap: 0.5rem;
-             position: absolute;
-             top: 0;
-             right: 0;
-         }
-     }
-
-     .message-toolbar[open] summary::before {
-         content: "";
-         width: 100vw;
-         height: 100vh;
-         position: fixed;
-         top: 0;
-         left: 0;
-         cursor: auto;
-         z-index: -1;
-     }
-
-     .message-toolbar[open] {
+     .message:hover, .message[open] {
          background-color: var(--brassica-background-secondary-color);
-         border: 1px solid var(--brassica-background-color);
-         padding: 0.5rem;
-         z-index: 999;
      }
 
-     .message-toolbar summary {
-         padding: 0.25rem;
-     }
-
-     .message-toolbar summary::marker {
-         content: "🖊️️";
-         color: #666;
-     }
-
-     .message-toolbar[open] summary::marker {
+     .message summary::marker {
          content: "";
-         color: var(--brassica-foreground-color);
      }
 
-     .message-toolbar a {
+     .message-options {
+         list-style-type: none;
+         padding: 0;
+     }
+
+     .message-options a {
          text-decoration: none;
-         color: var(--brassica-highlight-color)
+         color: var(--brassica-highlight-color);
+         padding: 0;
+         margin: 0;
      }
 
-     .message-toolbar ul {
+     .emoji-reacts {
          display: flex;
          flex-direction: row;
          list-style-type: none;
@@ -227,8 +170,8 @@
          margin: 0;
      }
 
-     .message-toolbar ul > li {
-         padding-right: 0.25rem;
+     .emoji-reacts li {
+         padding-right: 0.5rem;
      }
 
      .message-removed {
