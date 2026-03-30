@@ -98,8 +98,7 @@ truth.
 
 That said, having a capability to write to the chat log does not mean
 that a peer has the privilege to do whatever they'd like to the shared
-state of the room.  A capability variant that works in an offline
-context known as certificate capabilities or "zcaps" (inspired by
+state of the room.  Certificate capabilities or "zcaps" (inspired by
 [zcap-ld](https://w3c-ccg.github.io/zcap-spec/)) are used for a
 limited (when compared to ocaps) form of access control for events
 within the chat log CRDT.  The initiator of the chat room has the
