@@ -158,6 +158,31 @@ without too many glaring security flaws (hopefully).  This is not
 production software.  We did not concern ourselves with optimal
 bandwidth, memory, nor disk space usage.
 
+## gay://chat overlay
+
+This fork adds an experimental `gay://chat` overlay for using Brassica
+Chat as a capability-secure shared-protention substrate.  Structured
+`gay-event` values can be posted into the existing CRDT log without
+changing the event DAG format.  The overlay currently models:
+
+* observations, protentions, feedback, obstructions, experiments,
+  results, decisions, retrospectives, petnames, ports, grants,
+  revocations, and scores;
+* colored interfaces such as domain, phase, role, sensitivity, and
+  gluing status;
+* worldview export to `worldview/current.md` and
+  `worldview/consensus-topos.json`.
+
+Run the overlay-only smoke tests with:
+
+```sh
+./tests/run-gay-tests.sh
+```
+
+Those tests require only Guile and do not require a live OCapN relay.
+The full Brassica chat demo still requires the original Goblins/Fibers
+runtime described above.
+
 ## Areas of further research/development
 
 * Ergonomic UI/UX for the complexity introduced by decentralization

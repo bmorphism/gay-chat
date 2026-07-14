@@ -37,7 +37,7 @@
     (('gay-event . _) #t)
     (_ #f)))
 
-(define (section event key #:optional (default #f))
+(define* (section event key #:optional (default #f))
   (match event
     (('gay-event sections ...)
      (match (assoc key sections)
@@ -52,15 +52,15 @@
 (define (gay-event-body event) (section event 'body '()))
 (define (gay-event-feedback event) (section event 'feedback '()))
 
-(define (alist-ref* key alist #:optional (default #f))
+(define* (alist-ref* key alist #:optional (default #f))
   (match (assoc key alist)
     ((_ value) value)
     (#f default)))
 
-(define (gay-event-ref event key #:optional (default #f))
+(define* (gay-event-ref event key #:optional (default #f))
   (alist-ref* key (gay-event-refs event) default))
 
-(define (gay-event-color-ref event key #:optional (default #f))
+(define* (gay-event-color-ref event key #:optional (default #f))
   (alist-ref* key (gay-event-color event) default))
 
 (define valid-kinds
@@ -74,7 +74,8 @@
   (and (gay-event? event)
        (equal? (gay-event-version event) 1)
        (memq (gay-event-kind event) valid-kinds)
-       (every (match-lambda
-                ((key _) (memq key valid-color-keys))
-                (_ #f))
-              (gay-event-color event))))
+       (not (not
+             (every (match-lambda
+                      ((key _) (and (memq key valid-color-keys) #t))
+                      (_ #f))
+                    (gay-event-color event))))))

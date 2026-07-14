@@ -1,0 +1,39 @@
+name: Experiment
+description: Define an uncertainty-reducing experiment.
+title: "[Experiment]: "
+labels: ["type:experiment", "phase:action", "feedback:needed"]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+    validations: { required: true }
+  - type: textarea
+    id: linked_objects
+    attributes:
+      label: Linked protentions / obstructions
+      description: Link issues or gay://chat URIs.
+    validations: { required: true }
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Protocol
+      description: What will be done?
+    validations: { required: true }
+  - type: textarea
+    id: success_metric
+    attributes:
+      label: Success metric
+    validations: { required: true }
+  - type: input
+    id: horizon
+    attributes:
+      label: Time horizon
+      placeholder: "e.g. 14d"
+    validations: { required: true }
+  - type: textarea
+    id: reverse_update_path
+    attributes:
+      label: Reverse update path
+      description: What belief/protention/obstruction changes when result returns?
+    validations: { required: true }

@@ -1,0 +1,27 @@
+name: Require Feedback Closure
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review]
+
+jobs:
+  check-feedback-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const required = [
+              "Forward action",
+              "Linked cognitive objects",
+              "Expected feedback",
+              "Reverse update path",
+              "Triadic review",
+              "Reafference"
+            ];
+            const missing = required.filter(section => !body.includes(section));
+            if (missing.length > 0) {
+              core.setFailed("Missing PR feedback sections: " + missing.join(", "));
+            }

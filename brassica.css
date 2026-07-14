@@ -332,3 +332,44 @@ form fieldset label {
     outline: none;
     border: 1px solid var(--brassica-highlight-color);
 }
+
+
+.gay-event {
+    border-left: 0.35rem solid var(--brassica-accent-color);
+    background-color: color-mix(in srgb, var(--brassica-background-secondary-color), black 15%);
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+}
+
+.gay-event header {
+    color: var(--brassica-highlight-color);
+    margin-bottom: 0.35rem;
+}
+
+.gay-event dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.25rem 0.75rem;
+    margin: 0.25rem 0;
+}
+
+.gay-event dt {
+    color: var(--brassica-username-color);
+    font-weight: bold;
+}
+
+.gay-event dd {
+    margin: 0;
+}
+
+.gay-event-list {
+    margin: 0;
+    padding-left: 1rem;
+}
+
+.gay-event-protention { border-left-color: #ff4adc; }
+.gay-event-observation { border-left-color: #70b9fb; }
+.gay-event-feedback { border-left-color: #f2eb7c; }
+.gay-event-obstruction { border-left-color: #ff6b6b; }
+.gay-event-experiment { border-left-color: #9dff70; }
+.gay-event-decision { border-left-color: #c792ea; }

@@ -1,0 +1,35 @@
+name: Obstruction
+description: Register a disagreement or sheaf gluing failure.
+title: "[Obstruction]: "
+labels: ["type:obstruction", "glue:obstructed", "feedback:needed"]
+body:
+  - type: textarea
+    id: local_model_a
+    attributes:
+      label: Local model A
+      description: What does one side believe?
+    validations: { required: true }
+  - type: textarea
+    id: local_model_b
+    attributes:
+      label: Local model B
+      description: What does the other side believe?
+    validations: { required: true }
+  - type: textarea
+    id: overlap_domain
+    attributes:
+      label: Overlap domain
+      description: Where do these models need to agree?
+    validations: { required: true }
+  - type: textarea
+    id: conflict
+    attributes:
+      label: Conflict
+      description: Why do these models fail to glue?
+    validations: { required: true }
+  - type: textarea
+    id: resolution_needed
+    attributes:
+      label: Resolution needed
+      description: Experiment, decomposition, decision, authority, or new evidence?
+    validations: { required: true }

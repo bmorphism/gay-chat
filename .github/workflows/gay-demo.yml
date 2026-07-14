@@ -1,0 +1,15 @@
+name: gay://chat Demo
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scheme-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Guile
+        run: sudo apt-get update && sudo apt-get install -y guile-3.0
+      - name: Validate event module and export worldview
+        run: ./tests/run-gay-tests.sh

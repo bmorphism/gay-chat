@@ -22,6 +22,7 @@
 
 (define-module (brassica chat)
   #:use-module (brassica crdt)
+  #:use-module (brassica gay event)
   #:use-module (brassica hlc)
   #:use-module ((goblins) #:hide ($))
   #:use-module ((goblins) #:select (($ . :)))
@@ -558,8 +559,37 @@
   (define (messages-view messages certs)
     (fold-right
      (lambda (message memo)
-       (cons (render-message message certs) memo))
+       (match (render-message message certs)
+         (#f memo)
+         (view (cons view memo))))
      '() messages))
+  (define (all-visible-messages)
+    (messages-view
+     (append-map (match-lambda ((_ . log) (: log 'ref)))
+                 ;; Partitions in chronological order.
+                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
+                                     '() (: partitions))
+                       (lambda (a b) (< (car a) (car b)))))
+     (: certificates 'ref)))
+  (define (gay-message? message)
+    (match message
+      ((_ _ _ _ _ _ contents _)
+       (gay-event? contents))
+      (_ #f)))
+  (define (gay-message-kind? kind)
+    (lambda (message)
+      (match message
+        ((_ _ _ _ _ _ contents _)
+         (and (gay-event? contents)
+              (eq? (gay-event-kind contents) kind)))
+        (_ #f))))
+  (define (gay-message-color? key value)
+    (lambda (message)
+      (match message
+        ((_ _ _ _ _ _ contents _)
+         (and (gay-event? contents)
+              (equal? (gay-event-color-ref contents key) value)))
+        (_ #f))))
   (methods
    ((replica-id) replica-id)
    ((root-signer) root-signer)
@@ -609,13 +639,17 @@
    ;; Return a list of *all* messages across all partitions, in
    ;; chronological order.
    ((all-messages)
-    (messages-view
-     (append-map (match-lambda ((_ . log) (: log 'ref)))
-                 ;; Partitions in chronological order.
-                 (sort (hashmap-fold (lambda (k v memo) (cons (cons k v) memo))
-                                     '() (: partitions))
-                       (lambda (a b) (< (car a) (car b)))))
-     (: certificates 'ref)))
+    (all-visible-messages))
+   ((post-gay cert-id event #:optional (now (current-time/ms)))
+    (unless (valid-gay-event? event)
+      (error "invalid gay://chat event" event))
+    (: (partition-for-time now) 'post cert-id now event))
+   ((all-gay-events)
+    (filter gay-message? (all-visible-messages)))
+   ((gay-events-by-kind kind)
+    (filter (gay-message-kind? kind) (all-visible-messages)))
+   ((gay-events-by-color key value)
+    (filter (gay-message-color? key value) (all-visible-messages)))
    ((certificates) (: certificates 'ref))
    ((profiles) (: profiles 'ref))
    ((set-spn name) (: profiles 'set-spn name))

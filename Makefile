@@ -1,17 +1,22 @@
 backend_modules = \
+  brassica/gay/event.scm \
   brassica/hlc.scm \
   brassica/crdt.scm \
   brassica/chat.scm \
   brassica/relay.scm
 
 ui_modules = \
+  brassica/gay/event.scm \
   brassica/dom/document.scm \
   brassica/dom/element.scm \
   brassica/dom/event.scm \
   brassica/dom.scm
 
-demo: $(modules)
+demo: $(backend_modules)
 	guile -L . demo.scm
+
+gay-demo: $(backend_modules) export-worldview.scm gay-demo.scm
+	guile -L . gay-demo.scm
 
 app-backend.wasm: app-backend.scm $(backend_modules)
 	guild compile-wasm -L . -o app-backend.wasm app-backend.scm
@@ -25,4 +30,4 @@ server: app-backend.wasm app-ui.wasm server.scm
 embed.wasm: embed.scm $(backend_modules) $(ui_modules)
 	guild compile-wasm --bundle -L . -o embed.wasm embed.scm
 
-.PHONY: demo app server
+.PHONY: demo gay-demo app server

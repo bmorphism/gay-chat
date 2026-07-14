@@ -1,0 +1,46 @@
+name: Protention
+description: Register a future-oriented expectation for gay://chat.
+title: "[Protention]: "
+labels: ["type:protention", "phase:protention", "feedback:needed"]
+body:
+  - type: textarea
+    id: retention_basis
+    attributes:
+      label: Retention basis
+      description: What past observations or memories support this expectation?
+    validations: { required: true }
+  - type: textarea
+    id: current_impression
+    attributes:
+      label: Current impression
+      description: What is being observed now?
+    validations: { required: true }
+  - type: textarea
+    id: protention
+    attributes:
+      label: Protention
+      description: What do you expect will happen next?
+    validations: { required: true }
+  - type: input
+    id: confidence
+    attributes:
+      label: Confidence
+      placeholder: "0.0 - 1.0"
+    validations: { required: true }
+  - type: textarea
+    id: falsifier
+    attributes:
+      label: Falsifier
+      description: What future observation would show this was wrong?
+    validations: { required: true }
+  - type: input
+    id: horizon
+    attributes:
+      label: Time horizon
+      placeholder: "e.g. 30d"
+    validations: { required: true }
+  - type: textarea
+    id: requested_feedback
+    attributes:
+      label: Requested feedback
+      description: contradiction, evidence, experiment design, decomposition, etc.
