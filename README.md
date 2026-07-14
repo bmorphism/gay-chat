@@ -180,7 +180,7 @@ Run the overlay-only smoke tests with:
 ```
 
 Those tests require only Guile and do not require a live OCapN relay.
-The full Brassica chat demo still requires the original Goblins/Fibers
+The full Brassica chat runtime still requires the original Goblins/Fibers
 runtime described above.
 
 ## Areas of further research/development

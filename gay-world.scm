@@ -3,7 +3,7 @@
              (srfi srfi-1))
 
 (define events
-  (call-with-input-file "gay-demo-events.scm"
+  (call-with-input-file "gay-world-events.scm"
     (lambda (port)
       (let lp ((memo '()))
         (match (read port)
@@ -11,9 +11,9 @@
           (event (lp (cons event memo))))))))
 
 (unless (every valid-gay-event? events)
-  (error "invalid event in gay-demo-events.scm"))
+  (error "invalid event in gay-world-events.scm"))
 
-(format #t "gay://chat demo events: ~a\n" (length events))
+(format #t "gay://chat world events: ~a\n" (length events))
 (for-each
  (lambda (event)
    (format #t "- ~a ~a\n"
@@ -24,6 +24,6 @@
                "")))
  events)
 
-(let ((status (system* "guile" "-L" "." "export-worldview.scm" "demo-room" "worldview" "gay-demo-events.scm")))
+(let ((status (system* "guile" "-L" "." "export-worldview.scm" "world" "worldview" "gay-world-events.scm")))
   (unless (zero? status)
     (error "export-worldview failed" status)))

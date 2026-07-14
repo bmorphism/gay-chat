@@ -1,5 +1,5 @@
 ;;; Utilities for exporting visible gay://chat events from an in-memory room actor.
-;;; This file is loaded by demos/tests that have a live ^chat-room actor; it does
+;;; This file is loaded by worlds/tests that have a live ^chat-room actor; it does
 ;;; not create rooms itself because Brassica rooms require Goblins vats.
 
 (use-modules (brassica gay event)

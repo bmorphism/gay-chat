@@ -1,4 +1,4 @@
-# gay://chat worldview — demo-room
+# gay://chat worldview — world
 
 Events: 5
 

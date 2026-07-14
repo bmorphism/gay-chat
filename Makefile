@@ -15,8 +15,8 @@ ui_modules = \
 demo: $(backend_modules)
 	guile -L . demo.scm
 
-gay-demo: $(backend_modules) export-worldview.scm gay-demo.scm
-	guile -L . gay-demo.scm
+gay-world: $(backend_modules) export-worldview.scm gay-world.scm
+	guile -L . gay-world.scm
 
 app-backend.wasm: app-backend.scm $(backend_modules)
 	guild compile-wasm -L . -o app-backend.wasm app-backend.scm
@@ -30,4 +30,4 @@ server: app-backend.wasm app-ui.wasm server.scm
 embed.wasm: embed.scm $(backend_modules) $(ui_modules)
 	guild compile-wasm --bundle -L . -o embed.wasm embed.scm
 
-.PHONY: demo gay-demo app server
+.PHONY: demo gay-world app server
