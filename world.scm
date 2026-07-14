@@ -102,7 +102,7 @@
 (define sturdyref-carol<-alice
   (with-vat vat-carol (: mycapn-carol 'register chat-carol<-alice 'fake)))
 
-;; Some helper procedures to print out the results of this demo.
+;; Some helper procedures to print out the results of this world.
 (define (render-chat title names messages)
   (format #t "# Chat log for ~a\n" title)
   (newline)
@@ -172,7 +172,7 @@
 ;; Bob's cat walks on his keyboard and posts nonsense.
 (with-vat vat-bob (<-np chat-bob 'post cert-bob "asdf"))
 (sleep .01)
-(with-vat vat-alice (<-np chat-alice 'post cert-alice "This is a neat chat demo!"))
+(with-vat vat-alice (<-np chat-alice 'post cert-alice "This is a neat chat world!"))
 (sleep .01)
 ;; Carol makes a typo.
 (with-vat vat-carol (<-np chat-carol 'post cert-carol "Yeah, it's so grood."))
@@ -211,8 +211,8 @@
           ;; Bob deletes his cat's post.
           (<-np chat-bob 'delete cert-bob id created-at))
          ((and (equal? (assoc-ref names author) "Alice")
-               (equal? contents "This is a neat chat demo!"))
-          ;; Bob agrees that this demo is neat.
+               (equal? contents "This is a neat chat world!"))
+          ;; Bob agrees that this world is neat.
           (<-np chat-bob 'react cert-bob id created-at "💯"))
          ((and (equal? (assoc-ref names author) "Carol")
                (equal? contents "Yeah, it's so grood."))
@@ -231,7 +231,7 @@
           ;; Carol reacts to Alice's greeting.
           (<-np chat-carol 'react cert-carol id created-at "👋"))
          ((and (equal? (assoc-ref names author) "Alice")
-               (equal? contents "This is a neat chat demo!"))
+               (equal? contents "This is a neat chat world!"))
           ;; Carol accidentally reacts with a thumbs down emoji and
           ;; quickly unreacts.
           (<-np chat-carol 'react cert-carol id created-at "👎")

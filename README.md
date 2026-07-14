@@ -21,12 +21,12 @@ rather than complex cryptographic algorithms such as double-ratchet.
 
 Get the dependencies by running `guix shell -m manifest.scm`.
 
-Run `make demo` to run the simulated chat test in your terminal.
+Run `make world` to run the simulated chat world in your terminal.
 
 To try the web interface, run `make server`.  Copy a sturdyref for
 Alice, Bob, or Carol and visit http://localhost:8088.
 
-Note that these demos *do not* currently save their state.  This is
+Note that these worlds *do not* currently save their state.  This is
 just a prototype and all chat rooms are ephemeral.
 
 ## Technical overview

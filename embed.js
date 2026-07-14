@@ -110,7 +110,7 @@ const wasmOpts = {
 };
 
 window.addEventListener("load", () => {
-  document.getElementById("run-demo").addEventListener("click", async (event) => {
+  document.getElementById("run-world").addEventListener("click", async (event) => {
     event.preventDefault();
     document.getElementById("intro").remove();
     await Scheme.load_main("embed.wasm", wasmOpts);

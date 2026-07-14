@@ -12,8 +12,8 @@ ui_modules = \
   brassica/dom/event.scm \
   brassica/dom.scm
 
-demo: $(backend_modules)
-	guile -L . demo.scm
+world: $(backend_modules)
+	guile -L . world.scm
 
 gay-world: $(backend_modules) export-worldview.scm gay-world.scm
 	guile -L . gay-world.scm
@@ -30,4 +30,4 @@ server: app-backend.wasm app-ui.wasm server.scm
 embed.wasm: embed.scm $(backend_modules) $(ui_modules)
 	guild compile-wasm --bundle -L . -o embed.wasm embed.scm
 
-.PHONY: demo gay-world app server
+.PHONY: world gay-world app server
