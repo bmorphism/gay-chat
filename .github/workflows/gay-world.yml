@@ -5,11 +5,44 @@ on:
   pull_request:
 
 jobs:
-  scheme-smoke:
+  event-schema:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Guile
         run: sudo apt-get update && sudo apt-get install -y guile-3.0
-      - name: Validate event module and export worldview
+      - name: Validate structured event layer
+        run: |
+          guile -L . -c '(use-modules (brassica gay event)) (unless (valid-gay-event? (make-gay-event (quote protention) #:color (quote ((domain strategy))))) (error "event validation failed"))'
+          guile -L . tests/gay-event-test.scm
+
+  worldview-export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Guile
+        run: sudo apt-get update && sudo apt-get install -y guile-3.0
+      - name: Export and validate worldview
+        run: |
+          guile -L . gay-world.scm
+          test -s worldview/current.md
+          test -s worldview/consensus-topos.json
+          python3 -m json.tool worldview/consensus-topos.json >/dev/null
+          python3 tests/worldview-test.py
+
+  world-language-invariant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert world framing
+        run: ./tests/world-language-test.sh
+
+  all-tests:
+    runs-on: ubuntu-latest
+    needs: [event-schema, worldview-export, world-language-invariant]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Guile
+        run: sudo apt-get update && sudo apt-get install -y guile-3.0
+      - name: Run combined local test loop
         run: ./tests/run-gay-tests.sh

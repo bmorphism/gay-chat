@@ -18,6 +18,12 @@ world: $(backend_modules)
 gay-world: $(backend_modules) export-worldview.scm gay-world.scm
 	guile -L . gay-world.scm
 
+test: gay-world
+	./tests/run-gay-tests.sh
+
+world-language:
+	./tests/world-language-test.sh
+
 app-backend.wasm: app-backend.scm $(backend_modules)
 	guild compile-wasm -L . -o app-backend.wasm app-backend.scm
 
@@ -30,4 +36,4 @@ server: app-backend.wasm app-ui.wasm server.scm
 embed.wasm: embed.scm $(backend_modules) $(ui_modules)
 	guild compile-wasm --bundle -L . -o embed.wasm embed.scm
 
-.PHONY: world gay-world app server
+.PHONY: world gay-world test world-language app server
